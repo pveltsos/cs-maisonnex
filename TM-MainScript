@@ -1,0 +1,428 @@
+// ==UserScript==
+// @name         CS Maisonnex - Available Slots (with Menu)
+// @namespace    http://tampermonkey.net/
+// @version      2025-10-03
+// @description  Hides content of busy slots when faded, enhancing focus on available times.
+// @author       You
+// @match        https://cs-maisonnex.ch/*
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=google.com
+// @grant        none
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // Global variables
+    let availableSlotsData = [];
+    let isHighlighted = false;
+    let isFaded = false;
+    let isPanelExpanded = false;
+    const HIGHLIGHT_CLASS = 'court-slot-highlight';
+    const FADE_CLASS = 'court-slot-fade';
+    const HIDE_CONTENT_CLASS = 'hide-content'; // New class for hiding text
+
+    // Wait for the page content to load
+    setTimeout(initializeScript, 2500);
+
+    // --- Core Helper Functions (Unchanged) ---
+
+    function classifyCourt(courtId) {
+        const id = String(courtId || "0").toUpperCase();
+        let priority = (id === 'C' || ['1', '2', '3'].includes(id)) ? 1 : (parseInt(id, 10) >= 4 ? 2 : 99);
+        let type = (priority === 1) ? "Indoors 🏠" : (priority === 2 ? "Outdoors 🌳" : "Unknown ❓");
+        return { type: type, priority: priority, name: id };
+    }
+
+    function timeToInt(timeStr) {
+        return parseInt(String(timeStr).replace(':', '') || '0', 10);
+    }
+
+    // --- UI/Feature Functions (Modified Styling & Fade Logic) ---
+
+    function insertHighlightStyles() {
+        const style = document.createElement('style');
+        style.type = 'text/css';
+        style.innerHTML = `
+            /* Main Sidebar Container Styling */
+            #automation-sidebar {
+                position: fixed;
+                bottom: 10px;
+                right: 10px;
+                background-color: white;
+                border: 2px solid #333;
+                border-radius: 8px;
+                z-index: 99999;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                width: 50px; /* Initial collapsed width */
+                max-width: 380px;
+                transition: width 0.3s ease, height 0.3s ease;
+                overflow: hidden;
+            }
+            /* Content Area for Buttons and Table */
+            #sidebar-content {
+                display: none;
+                padding: 10px;
+                font-family: Arial, sans-serif;
+            }
+            /* Sidebar header for the main toggle icon */
+            #sidebar-header {
+                padding: 10px;
+                text-align: center;
+                cursor: pointer;
+                background-color: #333;
+                color: white;
+                font-size: 20px;
+                border-bottom: 2px solid #333;
+            }
+
+            /* --- FANCY BUTTON STYLING --- */
+            #control-buttons button, #export-button {
+                width: 100%;
+                padding: 10px;
+                margin-bottom: 5px;
+                border: 1px solid #0056b3;
+                border-radius: 20px;
+                cursor: pointer;
+                font-weight: bold;
+                color: #333;
+                background: linear-gradient(to bottom, #ffffff 0%, #f0f0f0 100%);
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                transition: background-color 0.2s, transform 0.1s, box-shadow 0.2s;
+            }
+            #control-buttons button:hover, #export-button:hover {
+                background: linear-gradient(to bottom, #f0f0f0 0%, #e0e0e0 100%);
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+                transform: translateY(-1px);
+            }
+            /* Active/Toggled Button Styles */
+            #highlight-toggle-btn[style*="ffc107"],
+            #fade-busy-btn[style*="bdbdbd"] {
+                color: #000 !important;
+                box-shadow: 0 0 10px rgba(255, 193, 7, 0.8);
+            }
+
+            /* Highlight Available Slots */
+            .${HIGHLIGHT_CLASS} {
+                background-color: rgba(76, 175, 80, 0.3) !important;
+                border: 2px solid #4CAF50 !important;
+            }
+            /* Fade Busy Slots Background */
+            .${FADE_CLASS} {
+                background-color: rgba(200, 200, 200, 0.5) !important;
+            }
+            /* Hides the content (text/images) inside the busy slot */
+            .${FADE_CLASS}.${HIDE_CONTENT_CLASS} {
+                color: transparent !important;
+                /* If the site uses background images for busy slots, you might need to handle them here */
+                /* background-image: none !important; */
+            }
+            /* Table Styling */
+            #availability-summary table, #availability-summary th, #availability-summary td {
+                border-color: #ddd !important;
+                background-color: transparent !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function togglePanel() {
+        const panel = document.getElementById('automation-sidebar');
+        const content = document.getElementById('sidebar-content');
+        const header = document.getElementById('sidebar-header');
+
+        isPanelExpanded = !isPanelExpanded;
+
+        if (isPanelExpanded) {
+            panel.style.width = '380px';
+            header.innerHTML = '🎾 Controls &nbsp; &times;';
+            setTimeout(() => { content.style.display = 'block'; }, 300);
+        } else {
+            content.style.display = 'none';
+            panel.style.width = '50px';
+            header.innerHTML = '🎾';
+        }
+    }
+
+    function toggleHighlight() {
+        const slotsToHighlight = document.querySelectorAll('td.cursor:not(.notallowed)');
+        const button = document.getElementById('highlight-toggle-btn');
+        if (!button) return;
+
+        isHighlighted = !isHighlighted;
+
+        slotsToHighlight.forEach(slotElement => {
+            slotElement.classList.toggle(HIGHLIGHT_CLASS, isHighlighted);
+        });
+
+        button.textContent = isHighlighted ? '💡 Highlight Slots OFF' : '🎨 Highlight Slots ON';
+        button.style.backgroundColor = isHighlighted ? '#ffc107' : '#f0f0f0';
+        button.style.color = isHighlighted ? '#333' : '#333';
+    }
+
+    /**
+     * Toggles the grey-out and content-hide class on all busy slots. (UPDATED LOGIC)
+     */
+    function fadeBusySlots() {
+        const busySlots = document.querySelectorAll('td.notallowed');
+        const button = document.getElementById('fade-busy-btn');
+        if (!button) return;
+
+        isFaded = !isFaded;
+
+        busySlots.forEach(slotElement => {
+            // Apply fade background
+            slotElement.classList.toggle(FADE_CLASS, isFaded);
+
+            // Hide content if the slot is NOT empty
+            // We check textContent length > 1 to ignore empty slots or those with just spaces/newlines
+            if (slotElement.textContent && slotElement.textContent.trim().length > 1) {
+                slotElement.classList.toggle(HIDE_CONTENT_CLASS, isFaded);
+            }
+        });
+
+        button.textContent = isFaded ? 'Clear Busy Slots' : '🌫️ Fade Busy Slots';
+        button.style.backgroundColor = isFaded ? '#bdbdbd' : '#f0f0f0';
+    }
+
+
+    function exportToCsv() {
+        if (availableSlotsData.length === 0) {
+            alert("No available slots detected to export.");
+            return;
+        }
+
+        const headers = ["Court Type", "Court ID", "Time"];
+        const csvRows = availableSlotsData.map(slot => [
+            `"${slot.type.replace(/\s*🏠\s*|\s*🌳\s*/, '')}"`,
+            `"${slot.courtId}"`,
+            `"${slot.time}"`
+        ]);
+
+        const csvContent = [
+            headers.join(','),
+            ...csvRows.map(e => e.join(','))
+        ].join('\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.setAttribute("href", url);
+        const today = new Date().toISOString().slice(0, 10);
+        link.setAttribute("download", `CS_Maisonnex_Availability_${today}.csv`);
+
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    /**
+     * Creates and inserts the floating sidebar UI container.
+     */
+    function insertControlPanel() {
+        const sidebarDiv = document.createElement('div');
+        sidebarDiv.id = 'automation-sidebar';
+
+        // --- Sidebar Header (Toggle Icon) ---
+        const headerDiv = document.createElement('div');
+        headerDiv.id = 'sidebar-header';
+        headerDiv.innerHTML = '🎾'; // Default collapsed icon
+        headerDiv.onclick = togglePanel;
+        sidebarDiv.appendChild(headerDiv);
+
+        // --- Sidebar Content ---
+        const contentDiv = document.createElement('div');
+        contentDiv.id = 'sidebar-content';
+
+        // 1. Controls (Toggle Buttons)
+        const controlsHeader = document.createElement('div');
+        controlsHeader.innerHTML = '<h5 style="margin: 0 0 5px 0; text-align: center; border-bottom: 1px solid #ddd; padding-bottom: 5px;">Toggle Controls</h5>';
+        contentDiv.appendChild(controlsHeader);
+
+        const btnDiv = document.createElement('div');
+        btnDiv.id = 'control-buttons';
+        btnDiv.style.display = 'flex';
+        btnDiv.style.flexWrap = 'wrap';
+        btnDiv.style.gap = '8px';
+        btnDiv.style.marginBottom = '10px';
+
+        // Highlight Button
+        const highlightBtn = document.createElement('button');
+        highlightBtn.id = 'highlight-toggle-btn';
+        highlightBtn.textContent = '🎨 Highlight Slots ON';
+        highlightBtn.onclick = toggleHighlight;
+        highlightBtn.style.flexGrow = '1';
+
+        // Fade Busy Button
+        const fadeBtn = document.createElement('button');
+        fadeBtn.id = 'fade-busy-btn';
+        fadeBtn.textContent = '🌫️ Fade Busy Slots';
+        fadeBtn.onclick = fadeBusySlots;
+        fadeBtn.style.flexGrow = '1';
+
+        btnDiv.appendChild(highlightBtn);
+        btnDiv.appendChild(fadeBtn);
+        contentDiv.appendChild(btnDiv);
+
+        // 2. Summary Table Container
+        const summaryDiv = document.createElement('div');
+        summaryDiv.id = 'availability-summary';
+        contentDiv.appendChild(summaryDiv);
+
+        // 3. Export Button (Below the table)
+        const exportBtn = document.createElement('button');
+        exportBtn.id = 'export-button';
+        exportBtn.innerHTML = '⬇️ Export Table to CSV';
+        exportBtn.style.marginTop = '10px';
+        exportBtn.onclick = exportToCsv;
+        contentDiv.appendChild(exportBtn);
+
+
+        sidebarDiv.appendChild(contentDiv);
+        document.body.appendChild(sidebarDiv);
+    }
+
+    /**
+     * Groups the slots and inserts the data into the on-page summary table.
+     */
+    function insertSummaryTable(sortedSlots) {
+        const groupedSlots = new Map();
+        let totalSlots = 0;
+
+        for (const slot of sortedSlots) {
+            const key = slot.courtId;
+
+            if (!groupedSlots.has(key)) {
+                groupedSlots.set(key, {
+                    courtId: slot.courtId,
+                    type: slot.type,
+                    priority: slot.sortPriority,
+                    times: []
+                });
+            }
+            groupedSlots.get(key).times.push(slot.time);
+            totalSlots++;
+        }
+
+        const courtGroups = Array.from(groupedSlots.values());
+
+        courtGroups.sort((a, b) => {
+            if (a.priority !== b.priority) return a.priority - b.priority;
+            return a.courtId.localeCompare(b.courtId, undefined, { numeric: true });
+        });
+
+        // --- Build HTML Table ---
+        const summaryDiv = document.getElementById('availability-summary');
+        if (!summaryDiv) return;
+
+        // Final Header Text
+        let tableHTML = `<h6 style="margin: 5px 0 8px 0; text-align: center; color: #007bff; font-size: 14px; font-weight: bold; border-top: 1px solid #ddd; padding-top: 5px;">Number of Available Time Slots (${totalSlots} Total)</h6>`;
+
+        if (totalSlots === 0) {
+             tableHTML += `<p style="text-align: center; color: red; font-size: 14px;">No available slots found.</p>`;
+        } else {
+            tableHTML += `
+                <div style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                    <thead style="background-color: #e9ecef; position: sticky; top: 0;">
+                        <tr>
+                            <th style="border: 1px solid #ddd; padding: 6px; color: #333;">Court</th>
+                            <th style="border: 1px solid #ddd; padding: 6px; color: #333;">Count</th>
+                            <th style="border: 1px solid #ddd; padding: 6px; color: #333;">Times</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            courtGroups.forEach(group => {
+                const isIndoor = group.type.includes('Indoors');
+                const typeLabel = isIndoor ? 'Indoor' : 'Outdoor';
+                const rowBg = isIndoor ? '#f0fff0' : '#fff5e0';
+
+                tableHTML += `
+                    <tr style="background-color: ${rowBg};">
+                        <td style="border: 1px solid #ddd; padding: 4px; font-weight: bold;">${typeLabel} ${group.courtId}</td>
+                        <td style="border: 1px solid #ddd; padding: 4px; text-align: center; color: #28a745;">${group.times.length}</td>
+                        <td style="border: 1px solid #ddd; padding: 4px; word-break: break-word;">${group.times.join(', ')}</td>
+                    </tr>
+                `;
+            });
+
+            tableHTML += `</tbody></table></div>`;
+        }
+
+        summaryDiv.innerHTML = tableHTML;
+
+        // Only show the alert once on page load
+        if (!isPanelExpanded) {
+            const outputForAlert = createSummaryOutputForAlert(courtGroups, totalSlots);
+            alert(outputForAlert);
+        }
+    }
+
+    function createSummaryOutputForAlert(courtGroups, totalSlots) {
+        let output = `🎾 **Total Available Slots Found: ${totalSlots}**\n`;
+
+        for (const group of courtGroups) {
+            const count = group.times.length;
+            output += `\n**${group.type} Court ${group.courtId}**: ${count} available slot(s)\n`;
+            output += `   ${group.times.join(', ')}\n`;
+        }
+        return output;
+    }
+
+    // --- Main Control Flow ---
+
+    function initializeScript() {
+        if (!document.body) {
+             setTimeout(initializeScript, 500);
+             return;
+        }
+
+        insertHighlightStyles();
+        insertControlPanel();
+        detectAndSortAvailableSlots();
+
+        // Set initial highlight state
+        isHighlighted = false;
+        toggleHighlight();
+    }
+
+    function detectAndSortAvailableSlots() {
+        let detectedSlots = [];
+        const allSlots = document.querySelectorAll('td.cursor');
+
+        allSlots.forEach(slotElement => {
+            const isAvailable = !slotElement.classList.contains('notallowed');
+
+            if (isAvailable) {
+                let rawCourtId = slotElement.getAttribute('terrain');
+                let slotTime = slotElement.getAttribute('heure');
+
+                if (rawCourtId && slotTime) {
+                    const classification = classifyCourt(rawCourtId);
+
+                    detectedSlots.push({
+                        courtId: rawCourtId,
+                        time: slotTime,
+                        type: classification.type,
+                        sortPriority: classification.priority,
+                        element: slotElement
+                    });
+                }
+            }
+        });
+
+        availableSlotsData = detectedSlots;
+
+        // Apply the Three-Tier Sort
+        availableSlotsData.sort((a, b) => {
+            if (a.sortPriority !== b.priority) return a.priority - b.priority;
+            const courtComparison = a.courtId.localeCompare(b.courtId, undefined, { numeric: true });
+            if (courtComparison !== 0) return courtComparison;
+            return timeToInt(a.time) - timeToInt(b.time);
+        });
+
+        insertSummaryTable(availableSlotsData);
+    }
+})();
