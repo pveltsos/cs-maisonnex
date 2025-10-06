@@ -1,0 +1,891 @@
+// ==UserScript==
+// @name         CS Maisonnex - History Stats
+// @namespace    http://tampermonkey.net/
+// @version      3.2
+// @description  Adds play statistics and graphs to the player history page with a clean, collapsible control panel. Key metrics formatting restored. History title bar removed and table hidden by default after generation.
+// @author       Phil V
+// @match        https://cs-maisonnex.ch/history
+// @grant        GM_addStyle
+// @require      https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js
+// @icon         http://philippe.veltsos.com/images/favicon.ico
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // Global flag to track DataTables readiness within the closure scope
+    let isDataTableReady = false;
+
+    // --- Tampermonkey CSS Injection ---
+    GM_addStyle(`
+        /* Font Awesome for Icons */
+        @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css');
+
+        /* General Container and Dashboard Styles */
+        #plugin-ch-stats-container {
+            font-family: 'Inter', sans-serif;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 12px;
+            background-color: #f8f8ff; /* Light lavender background */
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            color: #333;
+        }
+
+        #plugin-ch-stats-container h2 {
+            font-size: 1.8rem;
+            color: #4a5568; /* Darker header color */
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+
+        /* --- Collapsible Control Panel Styles --- */
+        #plugin-toggle-button {
+            position: fixed;
+            top: 50%;
+            right: 0;
+            transform: translateY(-50%);
+            width: 50px;
+            height: 50px;
+            background-color: #4c6ef5;
+            color: white;
+            border: none;
+            border-top-left-radius: 8px;
+            border-bottom-left-radius: 8px;
+            box-shadow: -4px 0 8px rgba(0,0,0,0.2);
+            cursor: pointer;
+            z-index: 1000;
+            font-size: 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.2s;
+        }
+
+        #plugin-toggle-button:hover {
+            background-color: #3b5bdb;
+        }
+
+        #plugin-ch-control-panel-drawer {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 350px;
+            height: 100%;
+            background-color: #e2e8f0;
+            box-shadow: -8px 0 15px rgba(0,0,0,0.2);
+            z-index: 999;
+            padding: 20px;
+            transform: translateX(100%);
+            transition: transform 0.3s ease-out;
+            overflow-y: auto;
+        }
+
+        #plugin-ch-control-panel-drawer.open {
+            transform: translateX(0);
+        }
+
+        #plugin-ch-control-panel-drawer h3 {
+            font-size: 1.5rem;
+            color: #4a5568;
+            margin-top: 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #c3c9d3;
+            margin-bottom: 20px;
+        }
+
+        /* Control Panel Content */
+        #name-input-section {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding-bottom: 15px;
+            border-bottom: 1px dashed #c3c9d3;
+            margin-bottom: 15px;
+        }
+
+        #name-input-section label {
+             font-weight: 600;
+             margin-top: 5px;
+        }
+
+        #name-input-section input[type="text"] {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        #action-buttons-section {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .plugin-ch-button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s, opacity 0.2s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            flex-grow: 1;
+        }
+
+        #btn-show-all {
+            background-color: #f59e0b;
+            color: white;
+            display: none; /* Hidden by default, only shown if auto-expand fails */
+        }
+
+        #btn-run-analytics {
+            background-color: #2f855a;
+            color: white;
+            opacity: 0.5;
+        }
+
+        #btn-run-analytics:hover:not(:disabled) {
+            background-color: #276749;
+        }
+
+        #btn-save-name {
+            background-color: #f59e0b;
+            color: white;
+            padding: 8px 10px;
+            font-size: 0.9rem;
+            max-width: 100%;
+            margin-top: 10px;
+            box-shadow: none;
+        }
+
+        .plugin-ch-button:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+            box-shadow: none;
+        }
+
+        /* Alert Box Style */
+        #plugin-ch-alert {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            z-index: 10000;
+            font-family: 'Inter', sans-serif;
+            opacity: 0;
+            transition: opacity 0.5s, transform 0.5s;
+            transform: translateX(100%);
+        }
+        .plugin-ch-alert-success { background-color: #2f855a; color: white; }
+        .plugin-ch-alert-error { background-color: #ef4444; color: white; }
+
+        /* Summary Card Styles (3 per row) */
+        .stats-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #ffffff;
+            border: 1px solid #e0e0e0;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+        }
+
+        /* Badge Formatting Restoration (Key Numbers) */
+        .stat-card-value {
+            font-size: 2.5rem; /* Large and prominent */
+            font-weight: 900; /* Extra bold */
+            color: #4c6ef5; /* Primary color */
+            margin-top: 5px;
+            line-height: 1.1;
+        }
+        .stat-card-title {
+            font-size: 0.9rem;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .stat-highlight {
+             font-size: 0.85rem;
+             color: #2f855a;
+             margin-top: 10px;
+             font-weight: 600;
+        }
+
+
+        /* Chart Styles (2 per row on desktop) */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .chart-box {
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+            min-height: 300px;
+        }
+
+        /* Top Players List Style Enhancements (Restoration) */
+        #top-players-container {
+            background-color: #ffffff;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1);
+        }
+        #top-players-list {
+            list-style: none;
+            padding: 0;
+            margin: 15px 0 0 0;
+        }
+        #top-players-list li {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #edf2f7;
+            font-size: 1.1rem;
+            align-items: center;
+        }
+        #top-players-list li:last-child {
+            border-bottom: none;
+        }
+        .rank {
+            font-weight: 700;
+            color: #4a5568;
+            width: 30px;
+            text-align: right;
+            margin-right: 10px;
+        }
+        .player-name {
+            flex-grow: 1;
+            font-weight: 500;
+        }
+        .reservation-count {
+            font-weight: 700;
+            color: #2f855a;
+            background-color: #e6fffa;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.95rem;
+        }
+
+        /* New Table Toggle Button Style */
+        #btn-toggle-table {
+            margin-bottom: 15px;
+            margin-top: 15px;
+            padding: 10px 20px;
+            font-size: 1rem;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            transition: background-color 0.2s;
+        }
+    `);
+
+    // --- Utility Functions ---
+
+    function formatName(last, first) {
+        if (!last || !first) return null;
+        const formattedLast = last.toUpperCase().trim();
+        const trimmedFirst = first.trim();
+        const formattedFirst = trimmedFirst.charAt(0).toUpperCase() + trimmedFirst.slice(1).toLowerCase();
+
+        return `${formattedLast} ${formattedFirst}`;
+    }
+
+    function normalizeForComparison(name) {
+        if (!name) return '';
+        return name.normalize("NFKD")
+                   .replace(/\s+/g, '')
+                   .toLowerCase();
+    }
+
+    function alertMessage(message, type) {
+        let alertBox = document.getElementById('plugin-ch-alert');
+        if (!alertBox) {
+            alertBox = document.createElement('div');
+            alertBox.id = 'plugin-ch-alert';
+            document.body.appendChild(alertBox);
+        }
+
+        alertBox.textContent = message;
+        alertBox.className = '';
+        alertBox.classList.add(type === 'success' ? 'plugin-ch-alert-success' : 'plugin-ch-alert-error');
+
+        setTimeout(() => {
+            alertBox.style.transform = 'translateX(0)';
+            alertBox.style.opacity = '1';
+        }, 10);
+
+        setTimeout(() => {
+            alertBox.style.transform = 'translateX(100%)';
+            alertBox.style.opacity = '0';
+        }, 4000);
+    }
+
+    function getWeekNumber(d) {
+        d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+        d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+        var yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+        var weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+        return d.getUTCFullYear() + '-' + String(weekNo).padStart(2, '0');
+    }
+
+    // --- Core Data Processing ---
+    function processHistoryTable(normalizedSelfName) {
+        const historyTable = document.getElementById('history');
+        if (!historyTable) return { totalReservations: 0 };
+
+        const tbody = historyTable.querySelector('tbody');
+        if (!tbody) return { totalReservations: 0 };
+
+        const playDates = [];
+        const reservationsPerCourt = new Map();
+        const reservationsPerPlayer1 = new Map();
+
+        const tableRows = tbody.getElementsByTagName('tr');
+
+        console.log(`Plugin.ch History Stats: Processing ${tableRows.length} records.`);
+
+        for (let i = 0; i < tableRows.length; i++) {
+            const row = tableRows[i];
+            const cells = row.getElementsByTagName('td');
+
+            if (cells.length >= 5) {
+                const dateString = cells[0].textContent.trim();
+                const timeString = cells[1].textContent.trim();
+                const courtName = cells[3].textContent.trim() || 'Unknown Court';
+                const playerNamesCell = cells[4];
+
+                const individualNamesRaw = playerNamesCell.innerHTML.split(/<br\s*\/?>/i);
+
+                individualNamesRaw.forEach(rawName => {
+                    const cleanedName = rawName.replace(/\s+/g, ' ').trim();
+
+                    if (cleanedName && cleanedName !== 'Unknown Player') {
+                        const normalizedEntryName = normalizeForComparison(cleanedName);
+
+                        if (!normalizedSelfName || normalizedEntryName !== normalizedSelfName) {
+                            reservationsPerPlayer1.set(cleanedName, (reservationsPerPlayer1.get(cleanedName) || 0) + 1);
+                        }
+                    }
+                });
+
+                const dateTimeString = `${dateString.replace(/-/g, '/')} ${timeString}`;
+                const date = new Date(dateTimeString);
+
+                if (!isNaN(date.getTime())) {
+                    playDates.push(date);
+                    reservationsPerCourt.set(courtName, (reservationsPerCourt.get(courtName) || 0) + 1);
+                }
+            }
+        }
+
+        const totalReservations = playDates.length;
+        if (totalReservations === 0) {
+            console.warn('Plugin.ch History Stats: Zero valid dates were extracted.');
+            return { totalReservations: 0 };
+        }
+
+        const stats = {
+            totalReservations: totalReservations,
+            reservationsPerYear: new Map(),
+            reservationsPerMonth: new Map(),
+            reservationsPerWeek: new Map(),
+            reservationsPerDay: new Map(),
+            reservationsPerHour: new Array(24).fill(0),
+        };
+
+        let maxYear = { count: 0, key: '' };
+        let maxMonth = { count: 0, key: '' };
+        let maxWeek = { count: 0, key: '' };
+        let maxDay = { count: 0, key: '' };
+        let maxHour = { count: 0, hour: -1 };
+
+        playDates.forEach(date => {
+            const year = date.getFullYear().toString();
+            stats.reservationsPerYear.set(year, (stats.reservationsPerYear.get(year) || 0) + 1);
+            if (stats.reservationsPerYear.get(year) > maxYear.count) {
+                maxYear = { count: stats.reservationsPerYear.get(year), key: year };
+            }
+
+            const monthKey = `${year}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+            stats.reservationsPerMonth.set(monthKey, (stats.reservationsPerMonth.get(monthKey) || 0) + 1);
+            if (stats.reservationsPerMonth.get(monthKey) > maxMonth.count) {
+                maxMonth = { count: stats.reservationsPerMonth.get(monthKey), key: monthKey };
+            }
+
+            const weekKey = getWeekNumber(date);
+            stats.reservationsPerWeek.set(weekKey, (stats.reservationsPerWeek.get(weekKey) || 0) + 1);
+            if (stats.reservationsPerWeek.get(weekKey) > maxWeek.count) {
+                maxWeek = { count: stats.reservationsPerWeek.get(weekKey), key: weekKey };
+            }
+
+            const dayKey = date.toISOString().split('T')[0];
+            stats.reservationsPerDay.set(dayKey, (stats.reservationsPerDay.get(dayKey) || 0) + 1);
+            if (stats.reservationsPerDay.get(dayKey) > maxDay.count) {
+                maxDay = { count: stats.reservationsPerDay.get(dayKey), key: dayKey };
+            }
+
+            const hour = date.getHours();
+            stats.reservationsPerHour[hour]++;
+            if (stats.reservationsPerHour[hour] > maxHour.count) {
+                maxHour = { count: stats.reservationsPerHour[hour], hour: hour };
+            }
+        });
+
+        stats.chartDataYear = Array.from(stats.reservationsPerYear).sort(([a], [b]) => a.localeCompare(b));
+        stats.chartDataMonth = Array.from(stats.reservationsPerMonth).sort(([a], [b]) => a.localeCompare(b));
+        stats.chartDataCourt = Array.from(reservationsPerCourt).sort(([, countA], [, countB]) => countB - countA);
+
+        stats.topPlayers1 = Array.from(reservationsPerPlayer1)
+            .sort(([, countA], [, countB]) => countB - countA);
+
+        stats.maxYear = maxYear;
+        stats.maxMonth = maxMonth;
+        stats.maxWeek = maxWeek;
+        stats.maxDay = maxDay;
+        stats.maxHour = maxHour;
+
+        return stats;
+    }
+
+    // --- DOM / Chart Rendering ---
+    function createStatCard(title, value, highlightText) {
+        return `
+            <div class="stat-card">
+                <div class="stat-card-title">${title}</div>
+                <div class="stat-card-value">${value}</div>
+                ${highlightText ? `<div class="stat-highlight">🏆 ${highlightText}</div>` : ''}
+            </div>
+        `;
+    }
+
+    function createTopPlayersList(topPlayers) {
+        let listHtml = '';
+        if (topPlayers.length === 0) {
+             listHtml = '<li>No opponent data available.</li>';
+        } else {
+            topPlayers.slice(0, 10).forEach(([name, count], index) => {
+                listHtml += `
+                    <li>
+                        <span class="rank">${index + 1}.</span>
+                        <span class="player-name">${name}</span>
+                        <span class="reservation-count">${count} reservations</span>
+                    </li>
+                `;
+            });
+        }
+        return `
+            <div id="top-players-container">
+                <h2>Top 10 Opponents (Excluding You)</h2>
+                <ul id="top-players-list">
+                    ${listHtml}
+                </ul>
+            </div>
+        `;
+    }
+
+    /**
+     * Renders the statistics dashboard and charts.
+     * @param {object} stats - The aggregated statistics object.
+     */
+    function addStatsAndGraphs(stats) {
+        const historyTable = document.getElementById('history');
+        if (!historyTable) return;
+
+        // Remove existing stats container and old toggle button if they exist
+        const oldStatsContainer = document.getElementById('plugin-ch-stats-container');
+        if (oldStatsContainer) oldStatsContainer.remove();
+
+        const oldToggleButton = document.getElementById('btn-toggle-table');
+        if (oldToggleButton) oldToggleButton.remove();
+
+        // 1. Create main container
+        const statsContainer = document.createElement('div');
+        statsContainer.id = 'plugin-ch-stats-container';
+        statsContainer.innerHTML = '<h2>Player History Dashboard</h2>';
+
+        // 2. Create Summary Cards
+        const summaryHtml = `
+            <div class="stats-summary">
+                ${createStatCard('Total Reservations Recorded', stats.totalReservations, 'Data from table below')}
+                ${createStatCard('Busiest Year', stats.maxYear.count, `Year: ${stats.maxYear.key}`)}
+                ${createStatCard('Busiest Month', stats.maxMonth.count, `Month: ${stats.maxMonth.key}`)}
+                ${createStatCard('Busiest Week', stats.maxWeek.count, `Week: ${stats.maxWeek.key}`)}
+                ${createStatCard('Busiest Day', stats.maxDay.count, `Date: ${stats.maxDay.key}`)}
+                ${createStatCard('Most Active Hour', stats.maxHour.count, `Time: ${String(stats.maxHour.hour).padStart(2, '0')}:00 - ${String(stats.maxHour.hour + 1).padStart(2, '0')}:00`)}
+            </div>
+        `;
+        statsContainer.innerHTML += summaryHtml;
+
+        // 3. Create Chart Grid
+        const chartsGrid = document.createElement('div');
+        chartsGrid.className = 'charts-grid';
+        chartsGrid.innerHTML = `
+            <div class="chart-box"><canvas id="chartYear"></canvas></div>
+            <div class="chart-box"><canvas id="chartMonth"></canvas></div>
+            <div class="chart-box"><canvas id="chartHour"></canvas></div>
+            <div class="chart-box"><canvas id="chartCourt"></canvas></div>
+        `;
+        statsContainer.appendChild(chartsGrid);
+
+        // 4. Create Top Players List
+        statsContainer.innerHTML += createTopPlayersList(stats.topPlayers1);
+
+        // 5. Insert the dashboard
+        historyTable.parentNode.insertBefore(statsContainer, historyTable);
+
+
+        // 6. Add Table Toggle Button
+        const btnToggleTable = document.createElement('button');
+        btnToggleTable.id = 'btn-toggle-table';
+        btnToggleTable.className = 'plugin-ch-button';
+
+        // Initial state: table is now hidden by default in handleRunAnalytics
+        btnToggleTable.innerHTML = '<i class="fa-solid fa-eye"></i> Show Raw History Table';
+        btnToggleTable.style.backgroundColor = '#2f855a'; // Green for Show
+
+        btnToggleTable.addEventListener('click', () => {
+            if (historyTable.style.display === 'none') {
+                // Show the table
+                historyTable.style.display = '';
+                btnToggleTable.innerHTML = '<i class="fa-solid fa-eye-slash"></i> Hide Raw History Table';
+                btnToggleTable.style.backgroundColor = '#ef4444'; // Red for Hide
+            } else {
+                // Hide the table
+                historyTable.style.display = 'none';
+                btnToggleTable.innerHTML = '<i class="fa-solid fa-eye"></i> Show Raw History Table';
+                btnToggleTable.style.backgroundColor = '#2f855a'; // Green for Show
+            }
+        });
+
+        // Insert the toggle button right before the history table
+        historyTable.parentNode.insertBefore(btnToggleTable, historyTable);
+
+
+        // --- Chart Rendering Logic ---
+        const primaryColor = 'rgba(74, 131, 237, 1)';
+        const secondaryColor = 'rgba(237, 74, 74, 1)';
+        const courtColors = ['#4c6ef5', '#2f855a', '#f59e0b', '#ef4444', '#10b981', '#3b82f6', '#f97316', '#a855f7', '#ec4899', '#f87171'];
+
+
+        new Chart(document.getElementById('chartYear'), {
+            type: 'bar',
+            data: {
+                labels: stats.chartDataYear.map(d => d[0]),
+                datasets: [{
+                    label: 'Reservations Made',
+                    data: stats.chartDataYear.map(d => d[1]),
+                    backgroundColor: stats.chartDataYear.map(d => d[0] === stats.maxYear.key ? secondaryColor : primaryColor),
+                    borderRadius: 6,
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    title: { display: true, text: 'Reservations Per Year' },
+                    legend: { display: false }
+                }
+            }
+        });
+
+        new Chart(document.getElementById('chartMonth'), {
+            type: 'line',
+            data: {
+                labels: stats.chartDataMonth.map(d => d[0]),
+                datasets: [{
+                    label: 'Reservations Made',
+                    data: stats.chartDataMonth.map(d => d[1]),
+                    borderColor: primaryColor,
+                    backgroundColor: 'rgba(74, 131, 237, 0.2)',
+                    fill: true,
+                    tension: 0.2
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    title: { display: true, text: 'Reservations Per Month (YYYY-MM)' },
+                    legend: { display: false }
+                },
+                scales: {
+                    x: { ticks: { maxRotation: 45, minRotation: 45 } }
+                }
+            }
+        });
+
+        const filteredHoursData = stats.reservationsPerHour.slice(6, 23);
+        const filteredHoursLabels = filteredHoursData.map((_, index) => `${String(index + 6).padStart(2, '0')}:00`);
+
+        new Chart(document.getElementById('chartHour'), {
+            type: 'bar',
+            data: {
+                labels: filteredHoursLabels,
+                datasets: [{
+                    label: 'Reservations Made',
+                    data: filteredHoursData,
+                    backgroundColor: filteredHoursData.map((_, index) => (index + 6) === stats.maxHour.hour ? secondaryColor : primaryColor),
+                    borderColor: '#ffffff',
+                    borderWidth: 2,
+                    barPercentage: 1.0,
+                    categoryPercentage: 1.0
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    title: { display: true, text: 'Reservations by Time of Day (06:00 - 22:59)' },
+                    legend: { display: false }
+                },
+                scales: {
+                    x: { grid: { display: false }, title: { display: true, text: 'Hour of Day' } },
+                    y: { beginAtZero: true }
+                }
+            }
+        });
+
+        new Chart(document.getElementById('chartCourt'), {
+            type: 'doughnut',
+            data: {
+                labels: stats.chartDataCourt.map(d => d[0]),
+                datasets: [{
+                    label: 'Reservations Made',
+                    data: stats.chartDataCourt.map(d => d[1]),
+                    backgroundColor: stats.chartDataCourt.map((_, i) => courtColors[i % courtColors.length]),
+                    hoverOffset: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    title: { display: true, text: 'Distribution of Reservations by Court' },
+                    legend: {
+                        position: 'right',
+                        align: 'start',
+                    }
+                }
+            }
+        });
+    }
+
+    // --- Button/Panel Handlers ---
+
+    function toggleControlPanel() {
+        const drawer = document.getElementById('plugin-ch-control-panel-drawer');
+        drawer.classList.toggle('open');
+    }
+
+    function handleSaveName() {
+        const lastNameInput = document.getElementById('player-last-name').value.trim();
+        const firstNameInput = document.getElementById('player-first-name').value.trim();
+        const currentPlayerDisplay = document.getElementById('current-player-display');
+
+        if (lastNameInput && firstNameInput) {
+             localStorage.setItem('pluginChLastName', lastNameInput);
+             localStorage.setItem('pluginChFirstName', firstNameInput);
+             const currentSelfName = formatName(lastNameInput, firstNameInput);
+             currentPlayerDisplay.textContent = `Filtering: ${currentSelfName}`;
+             currentPlayerDisplay.style.color = '#4c6ef5';
+             alertMessage('Name saved! Generate analytics to apply the filter.', 'success');
+        } else {
+            currentPlayerDisplay.textContent = 'Filtering: None';
+            currentPlayerDisplay.style.color = '#ef4444';
+            alertMessage('Please enter both Last Name and First Name.', 'error');
+        }
+    }
+
+    function handleShowAll(btnShowAll) {
+        if (!isDataTableReady || !$.fn.dataTable.isDataTable('#history')) return false;
+
+        const dt = $('#history').DataTable();
+        const initialLength = dt.page.len();
+
+        if (initialLength !== -1) {
+            dt.page.len(-1).draw();
+        }
+
+        // Check if the expansion succeeded (length is now -1, meaning "all")
+        if (dt.page.len() === -1) {
+            btnShowAll.style.display = 'none';
+            document.getElementById('btn-run-analytics').disabled = false;
+            document.getElementById('btn-run-analytics').style.opacity = '1';
+            return true;
+        } else {
+            btnShowAll.style.display = 'block';
+            return false;
+        }
+    }
+
+    function handleRunAnalytics(btnRunAnalytics) {
+        btnRunAnalytics.disabled = true;
+        btnRunAnalytics.textContent = 'Generating Charts...';
+        toggleControlPanel();
+
+        console.log('Plugin.ch History Stats: Running analytics and charts generation.');
+
+        const lastName = localStorage.getItem('pluginChLastName');
+        const firstName = localStorage.getItem('pluginChFirstName');
+        const selfNameFormatted = formatName(lastName, firstName);
+        const normalizedSelfName = normalizeForComparison(selfNameFormatted);
+
+        const stats = processHistoryTable(normalizedSelfName);
+
+        if (stats && stats.totalReservations > 0) {
+            addStatsAndGraphs(stats);
+
+            // NEW: Hide the history table by default after generating analytics
+            const historyTable = document.getElementById('history');
+            const toggleButton = document.getElementById('btn-toggle-table');
+
+            if (historyTable) {
+                historyTable.style.display = 'none';
+            }
+            if (toggleButton) {
+                toggleButton.innerHTML = '<i class="fa-solid fa-eye"></i> Show Raw History Table';
+                toggleButton.style.backgroundColor = '#2f855a'; // Green for Show
+            }
+
+            btnRunAnalytics.textContent = 'Analytics Generated';
+        } else {
+            console.warn('Plugin.ch History Stats: No reservations found for analysis.');
+            btnRunAnalytics.textContent = 'No Data Found';
+        }
+
+        setTimeout(() => {
+            btnRunAnalytics.disabled = false;
+            btnRunAnalytics.style.opacity = '1';
+        }, 500);
+    }
+
+
+    // --- Main Execution ---
+    function initialize() {
+        console.log('Plugin.ch History Stats (v3.2): Initializing script...');
+        const historyTable = document.getElementById('history');
+
+        if (!historyTable) {
+            console.warn('Plugin.ch History Stats: History table not found.');
+            return;
+        }
+
+        // --- NEW: Hide the redundant "History" header ---
+        const historyHeader = document.querySelector('.block-header h4.pl-3');
+        if (historyHeader && historyHeader.textContent.trim() === 'History') {
+            const blockHeader = historyHeader.closest('.block-header');
+            if (blockHeader) {
+                blockHeader.style.display = 'none';
+            }
+        }
+
+        // --- UI setup and insertion (Collapsible Panel) ---
+
+        // 1. Create the Drawer
+        const drawer = document.createElement('div');
+        drawer.id = 'plugin-ch-control-panel-drawer';
+        drawer.innerHTML = `<h3><i class="fa-solid fa-chart-line"></i> Reservation Analytics Control</h3>`;
+
+        // 2. Control Panel Content
+        const controlPanel = document.createElement('div');
+        controlPanel.id = 'plugin-ch-control-panel';
+
+        const savedLastName = localStorage.getItem('pluginChLastName') || '';
+        const savedFirstName = localStorage.getItem('pluginChFirstName') || '';
+        const currentSelfName = formatName(savedLastName, savedFirstName);
+
+        const nameSection = document.createElement('div');
+        nameSection.id = 'name-input-section';
+
+        nameSection.innerHTML = `
+            <label for="player-last-name">Last Name:</label>
+            <input type="text" id="player-last-name" placeholder="VELTSOS" value="${savedLastName}">
+            <label for="player-first-name">First Name:</label>
+            <input type="text" id="player-first-name" placeholder="Philippe" value="${savedFirstName}">
+            <button id="btn-save-name" class="plugin-ch-button">Step 1: Save Player Name</button>
+            <span id="current-player-display" style="font-weight: 700; color: ${currentSelfName ? '#4c6ef5' : '#ef4444'};">
+                Filtering: ${currentSelfName || 'None Set'}
+            </span>
+        `;
+        controlPanel.appendChild(nameSection);
+
+        const actionButtonsSection = document.createElement('div');
+        actionButtonsSection.id = 'action-buttons-section';
+
+        const btnShowAll = document.createElement('button');
+        btnShowAll.id = 'btn-show-all';
+        btnShowAll.className = 'plugin-ch-button';
+        btnShowAll.textContent = 'Reload: Show All Records (Auto-expand failed)';
+        btnShowAll.style.backgroundColor = '#f59e0b';
+
+        const btnRunAnalytics = document.createElement('button');
+        btnRunAnalytics.id = 'btn-run-analytics';
+        btnRunAnalytics.className = 'plugin-ch-button';
+        btnRunAnalytics.textContent = 'Step 2: Generate Analytics';
+        btnRunAnalytics.disabled = true;
+
+        actionButtonsSection.appendChild(btnShowAll);
+        actionButtonsSection.appendChild(btnRunAnalytics);
+        controlPanel.appendChild(actionButtonsSection);
+
+        drawer.appendChild(controlPanel);
+        document.body.appendChild(drawer);
+
+        // 3. Create the Toggle Button
+        const toggleButton = document.createElement('button');
+        toggleButton.id = 'plugin-toggle-button';
+        toggleButton.innerHTML = `<i class="fa-solid fa-chart-simple"></i>`;
+        document.body.appendChild(toggleButton);
+
+        // --- DataTables Readiness Check & Auto-Expand ---
+        document.getElementById('btn-save-name').addEventListener('click', handleSaveName);
+        toggleButton.addEventListener('click', toggleControlPanel);
+
+        let checkAttempts = 0;
+        const maxAttempts = 100;
+        const checkInterval = 100;
+
+        const dataTableCheck = setInterval(() => {
+            checkAttempts++;
+
+            if (typeof $ !== 'undefined' && typeof $.fn.DataTable !== 'undefined' && $.fn.dataTable.isDataTable('#history')) {
+                clearInterval(dataTableCheck);
+                isDataTableReady = true;
+                console.log('Plugin.ch History Stats: DataTables confirmed ready. Attempting auto-expand...');
+
+                // 1. Attempt Auto-Expand
+                const expandSuccess = handleShowAll(btnShowAll);
+
+                // 2. Enable Analytics button only if data is fully shown OR if the auto-expand failed and the manual button is visible
+                if (expandSuccess || btnShowAll.style.display !== 'none') {
+                    btnRunAnalytics.disabled = false;
+                    btnRunAnalytics.style.opacity = '1';
+                }
+
+                // 3. Attach listeners
+                btnShowAll.addEventListener('click', () => handleShowAll(btnShowAll));
+                btnRunAnalytics.addEventListener('click', () => handleRunAnalytics(btnRunAnalytics));
+
+
+            } else if (checkAttempts >= maxAttempts) {
+                clearInterval(dataTableCheck);
+                console.error("Plugin.ch History Stats: Timeout reached. DataTables not found or not initialized.");
+                btnShowAll.textContent = 'DataTables Error';
+                btnShowAll.style.display = 'block';
+            }
+        }, checkInterval);
+    }
+
+    // Wait for the base page structure to load
+    window.addEventListener('load', initialize);
+
+})();

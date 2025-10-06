@@ -1,10 +1,12 @@
 // ==UserScript==
-// @name         CS Maisonnex - Available Slots (with Menu)
+// @name         CS Maisonnex - Available Slots (Reservation Stats FINAL - COMPACT USER INFO)
 // @namespace    http://tampermonkey.net/
-// @version      2025-10-03
-// @description  Hides content of busy slots when faded, enhancing focus on available times.
+// @version      2025-10-06.20 (Merged with Court Filter & Floating Header Fix)
+// @description  Adds a profile link and removes redundant vertical padding from the User Info section for a cleaner look. Adds a Court Filter tool.
 // @author       You
 // @match        https://cs-maisonnex.ch/*
+// @exclude      https://cs-maisonnex.ch/profile
+// @require      https://code.jquery.com/jquery-3.7.1.min.js
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=google.com
 // @grant        none
 // ==/UserScript==
@@ -17,19 +19,35 @@
     let isHighlighted = false;
     let isFaded = false;
     let isPanelExpanded = false;
+    let isLoggedIn = false;
+    let currentFilterMode = 'all'; // Tracks the current filter state
+
+    // Constants for court filtering (based on column index in the table, starting at 1 for Court C)
+    const INDOOR_INDICES = [1, 2, 3, 4]; // C, 1, 2, 3
+    const OUTDOOR_INDICES = [5, 6, 7, 8, 9, 10, 11]; // 4, 5, 6, 7, 8, 9, 10
+
     const HIGHLIGHT_CLASS = 'court-slot-highlight';
     const FADE_CLASS = 'court-slot-fade';
-    const HIDE_CONTENT_CLASS = 'hide-content'; // New class for hiding text
+    const HIDE_CONTENT_CLASS = 'hide-content';
+    const EXPANDED_CLASS = 'expanded-content';
+
+    // Constants for sizing
+    const COLLAPSED_WIDTH = '100px';
+    const COLLAPSED_PADDING = '14px 10px';
+    const TOP_OFFSET = 130;
+    const BOTTOM_MARGIN = 10;
 
     // Wait for the page content to load
     setTimeout(initializeScript, 2500);
 
-    // --- Core Helper Functions (Unchanged) ---
+    // --- Core Helper Functions ---
 
     function classifyCourt(courtId) {
         const id = String(courtId || "0").toUpperCase();
-        let priority = (id === 'C' || ['1', '2', '3'].includes(id)) ? 1 : (parseInt(id, 10) >= 4 ? 2 : 99);
-        let type = (priority === 1) ? "Indoors 🏠" : (priority === 2 ? "Outdoors 🌳" : "Unknown ❓");
+        let priority = (id === 'C' || ['1', '2', '3'].includes(id)) ?
+            1 : (parseInt(id, 10) >= 4 ? 2 : 99);
+        let type = (priority === 1) ?
+            "Indoors 🏠" : (priority === 2 ? "Outdoors 🌳" : "Unknown ❓");
         return { type: type, priority: priority, name: id };
     }
 
@@ -37,7 +55,141 @@
         return parseInt(String(timeStr).replace(':', '') || '0', 10);
     }
 
-    // --- UI/Feature Functions (Modified Styling & Fade Logic) ---
+    /**
+     * Extracts all four numeric reservation stats from the specific text element.
+     */
+    function extractReservationStats() {
+        const texteDiv = document.querySelector('#contenuHeader #texte');
+        const stats = { authorized: 0, used: 0, remaining: 0, guest_res: 0 };
+        if (!texteDiv) {
+            return stats;
+        }
+
+        const text = texteDiv.textContent;
+        const authMatch = text.match(/Number of current authorised reservations : (\d+)/);
+        const usedMatch = text.match(/Used : (\d+)/);
+        const remainingMatch = text.match(/Remaining : (\d+)/);
+        const guestMatch = text.match(/Number of free guest credits remaining : (\d+)/);
+        if (authMatch) {
+            stats.authorized = parseInt(authMatch[1], 10);
+        }
+        if (usedMatch) {
+            stats.used = parseInt(usedMatch[1], 10);
+        }
+        if (remainingMatch) {
+            stats.remaining = parseInt(remainingMatch[1], 10);
+        }
+        if (guestMatch) {
+             stats.guest_res = parseInt(guestMatch[1], 10);
+        }
+
+        return stats;
+    }
+
+    // --- UI/Feature Functions ---
+
+    /**
+     * Toggles the visibility of a collapsible content panel.
+     */
+    function toggleCollapse(contentId, headerId) {
+        const content = document.getElementById(contentId);
+        const header = document.getElementById(headerId);
+
+        if (content.classList.contains(EXPANDED_CLASS)) {
+            // Collapse
+            content.style.maxHeight = '0px';
+            content.classList.remove(EXPANDED_CLASS);
+            header.classList.remove('expanded');
+        } else {
+            // Expand
+            content.classList.add(EXPANDED_CLASS);
+            header.classList.add('expanded');
+
+            // Set max-height immediately
+            content.style.maxHeight = content.scrollHeight + "px";
+        }
+    }
+
+    /**
+     * Forces the content section to recalculate its max-height.
+     */
+    function fixContentHeight(contentId) {
+        const content = document.getElementById(contentId);
+        if (content && content.classList.contains(EXPANDED_CLASS)) {
+            content.style.maxHeight = 'none';
+            setTimeout(() => {
+                content.style.maxHeight = content.scrollHeight + "px";
+            }, 10);
+        }
+    }
+
+    /**
+     * Toggles the court table display between All, Indoor, and Outdoor courts,
+     * applying the filter to both the main table and the floating header.
+     */
+    function toggleCourtFilter() {
+        const button = document.getElementById('court-filter-btn');
+        if (!button) return;
+
+        // Cycle through modes: 'all' -> 'indoor' -> 'outdoor' -> 'all'
+        if (currentFilterMode === 'all') {
+            currentFilterMode = 'indoor';
+        } else if (currentFilterMode === 'indoor') {
+            currentFilterMode = 'outdoor';
+        } else {
+            currentFilterMode = 'all';
+        }
+
+        let indicesToHide = [];
+        let buttonText = 'Filter: All Courts 🎾';
+        let buttonColor = 'linear-gradient(to bottom, #ffffff 0%, #f0f0f0 100%)';
+        let textColor = '#333';
+        let borderColor = '#0056b3';
+
+        if (currentFilterMode === 'indoor') {
+            indicesToHide = OUTDOOR_INDICES;
+            buttonText = 'Filter: Indoors 🏠 (C, 1-3)';
+            buttonColor = 'linear-gradient(to bottom, #d9b8ff 0%, #b388ff 100%)';
+            textColor = '#333';
+            borderColor = '#b340ff';
+        } else if (currentFilterMode === 'outdoor') {
+            indicesToHide = INDOOR_INDICES;
+            buttonText = 'Filter: Outdoors 🌳 (4-10)';
+            buttonColor = 'linear-gradient(to bottom, #c3e6cb 0%, #a2d2a2 100%)';
+            textColor = '#333';
+            borderColor = '#28a745';
+        }
+
+        // --- CORE CHANGE: Apply filter to both tables ---
+        const $tables = $('#table_reservation, #table_head');
+
+        $tables.each(function() {
+            const $table = $(this);
+            $table.find('tr').each(function() {
+                const $row = $(this);
+                // Target both TH (header) and TD (data) cells
+                $row.children('th, td').each(function(index) {
+                    const $cell = $(this);
+
+                    // Index 0 is the time slot column (TH/TD) and is never hidden.
+                    if (index > 0) {
+                        if (indicesToHide.includes(index)) {
+                            $cell.hide();
+                        } else {
+                            $cell.show();
+                        }
+                    }
+                });
+            });
+        });
+
+        // Update button appearance
+        button.textContent = buttonText;
+        button.style.background = buttonColor;
+        button.style.color = textColor;
+        button.style.borderColor = borderColor;
+    }
+
 
     function insertHighlightStyles() {
         const style = document.createElement('style');
@@ -46,37 +198,51 @@
             /* Main Sidebar Container Styling */
             #automation-sidebar {
                 position: fixed;
-                bottom: 10px;
+                top: ${TOP_OFFSET}px;
                 right: 10px;
                 background-color: white;
                 border: 2px solid #333;
                 border-radius: 8px;
                 z-index: 99999;
                 box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-                width: 50px; /* Initial collapsed width */
+                width: ${COLLAPSED_WIDTH};
                 max-width: 380px;
                 transition: width 0.3s ease, height 0.3s ease;
-                overflow: hidden;
+                max-height: calc(100vh - ${TOP_OFFSET + BOTTOM_MARGIN}px);
             }
-            /* Content Area for Buttons and Table */
+
+            /* Content Area for Buttons and Table (Scrollable area) */
             #sidebar-content {
                 display: none;
                 padding: 10px;
                 font-family: Arial, sans-serif;
+                font-size: 14px;
+                overflow-y: auto;
+                max-height: calc(100vh - ${TOP_OFFSET + BOTTOM_MARGIN}px - 70px);
             }
-            /* Sidebar header for the main toggle icon */
+
+            /* Sidebar header for the main toggle icon (Collapsed State) */
             #sidebar-header {
-                padding: 10px;
+                padding: ${COLLAPSED_PADDING};
                 text-align: center;
                 cursor: pointer;
                 background-color: #333;
                 color: white;
-                font-size: 20px;
+                font-size: 40px;
                 border-bottom: 2px solid #333;
             }
 
+            /* Sidebar header (Expanded State - Custom Text Size) */
+            #sidebar-header.expanded {
+                font-size: 20px;
+            }
+
             /* --- FANCY BUTTON STYLING --- */
-            #control-buttons button, #export-button {
+            #control-buttons {
+                 padding: 10px 0;
+            }
+
+            #control-buttons button {
                 width: 100%;
                 padding: 10px;
                 margin-bottom: 5px;
@@ -86,19 +252,38 @@
                 font-weight: bold;
                 color: #333;
                 background: linear-gradient(to bottom, #ffffff 0%, #f0f0f0 100%);
-                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                box-shadow: 0 0 2px rgba(0, 0, 0, 0.1);
                 transition: background-color 0.2s, transform 0.1s, box-shadow 0.2s;
             }
+
+            /* --- DISCRETE EXPORT BUTTON STYLING --- */
+            #export-button {
+                float: right;
+                padding: 5px 10px;
+                font-size: 11px;
+                margin-top: 5px;
+                margin-bottom: 0px;
+                border: 1px solid #0056b3;
+                border-radius: 12px;
+                cursor: pointer;
+                font-weight: bold;
+                color: #333;
+                background: linear-gradient(to bottom, #ffffff 0%, #f0f0f0 100%);
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+                transition: background-color 0.2s, transform 0.1s, box-shadow 0.2s;
+            }
+
             #control-buttons button:hover, #export-button:hover {
                 background: linear-gradient(to bottom, #f0f0f0 0%, #e0e0e0 100%);
-                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
                 transform: translateY(-1px);
             }
+
             /* Active/Toggled Button Styles */
             #highlight-toggle-btn[style*="ffc107"],
             #fade-busy-btn[style*="bdbdbd"] {
                 color: #000 !important;
-                box-shadow: 0 0 10px rgba(255, 193, 7, 0.8);
+                box-shadow: 0 0 5px rgba(255, 193, 7, 0.8);
             }
 
             /* Highlight Available Slots */
@@ -108,21 +293,120 @@
             }
             /* Fade Busy Slots Background */
             .${FADE_CLASS} {
-                background-color: rgba(200, 200, 200, 0.5) !important;
+                opacity: 0.3;
             }
             /* Hides the content (text/images) inside the busy slot */
             .${FADE_CLASS}.${HIDE_CONTENT_CLASS} {
                 color: transparent !important;
-                /* If the site uses background images for busy slots, you might need to handle them here */
-                /* background-image: none !important; */
             }
-            /* Table Styling */
-            #availability-summary table, #availability-summary th, #availability-summary td {
+
+            /* Table Styling Consistency */
+            #availability-summary table, #availability-summary th, #availability-summary td,
+            #reservation-stats table, #reservation-stats th, #reservation-stats td {
                 border-color: #ddd !important;
                 background-color: transparent !important;
             }
+
+            /* Current Reservations Table fixes (For Logged In) */
+            #current-reservations-wrapper #currnt_resrvtn_table_info {
+                display: none !important;
+            }
+            #current-reservations-wrapper #currnt_resrvtn_table {
+                width: 100% !important;
+            }
+            #current-reservations-wrapper {
+                 min-height: 20px;
+                 padding-bottom: 5px;
+            }
+            /* Adjusted: Reduced padding for empty reservations message */
+            #current-reservations-empty-message {
+                 text-align: center;
+                 color: #888;
+                 font-style: italic;
+                 padding: 5px 0;
+            }
+
+            /* STATIC TIMESLOTS SECTION STYLING */
+            #static-timeslots-container {
+                 background-color: #f8f8f8;
+                 border: 1px solid #ddd;
+                 border-radius: 4px;
+                 padding: 10px;
+                 margin-top: 5px;
+                 margin-bottom: 5px;
+                 overflow: hidden;
+            }
+
+            /* User Info Formatting - REMOVED redundant padding */
+            .user-info-text-wrapper {
+                text-align: center;
+            }
+
+            /* Collapsible Header Styling (Consistent Spacing) */
+            .collapsible-header {
+                background-color: #f1f1f1;
+                color: #444;
+                cursor: pointer;
+                padding: 10px 15px; /* Base padding */
+                width: 100%;
+                border: none;
+                text-align: left;
+                outline: none;
+                font-size: 15px;
+                transition: background-color 0.3s;
+                margin-top: 5px;
+                border-radius: 4px;
+                font-weight: bold;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            .collapsible-header:hover {
+                background-color: #ddd;
+            }
+
+            /* ADDED: Explicit padding for the expanded state of the user-info header */
+            #user-info-header.expanded {
+                 padding: 10px 15px;
+            }
+
+
+            /* Collapsible Content Styling (Clean Spacing) */
+            .collapsible-content {
+                max-height: 0;
+                overflow: hidden;
+                transition: max-height 0.3s ease-in-out;
+                background-color: white;
+                border: 1px solid #ddd;
+                border-top: none;
+                border-radius: 0 0 4px 4px;
+                margin-bottom: 0px;
+            }
+
+            /* Override padding for the controls section to maintain internal padding */
+            #controls-content {
+                 padding: 0 10px 10px 10px;
+            }
+
+            /* Style for the profile link */
+            .profile-link {
+                 font-size: 12px;
+                 margin-left: 10px;
+                 color: #007bff;
+                 text-decoration: none;
+                 font-weight: normal;
+            }
+            .profile-link:hover {
+                 text-decoration: underline;
+            }
         `;
         document.head.appendChild(style);
+        // jQuery contains selector for case-insensitive text search
+        if (typeof jQuery !== 'undefined') {
+            jQuery.expr[':'].contains = function(a, i, m) {
+                return jQuery(a).text().toUpperCase().indexOf(m[3].toUpperCase()) >= 0;
+            };
+        }
     }
 
     function togglePanel() {
@@ -131,15 +415,28 @@
         const header = document.getElementById('sidebar-header');
 
         isPanelExpanded = !isPanelExpanded;
-
         if (isPanelExpanded) {
             panel.style.width = '380px';
-            header.innerHTML = '🎾 Controls &nbsp; &times;';
-            setTimeout(() => { content.style.display = 'block'; }, 300);
+            header.innerHTML = '<span class="expanded">🎾 Controls &nbsp; &times;</span>';
+            header.classList.add('expanded');
+
+            panel.style.height = `calc(100vh - ${TOP_OFFSET + BOTTOM_MARGIN}px)`;
+            setTimeout(() => {
+                content.style.display = 'block';
+
+                fixContentHeight('controls-content');
+                if (isLoggedIn) {
+                    fixContentHeight('res-stats-content');
+                    fixContentHeight('user-info-content');
+                }
+
+            }, 300);
         } else {
             content.style.display = 'none';
-            panel.style.width = '50px';
+            panel.style.width = COLLAPSED_WIDTH;
+            panel.style.height = 'auto';
             header.innerHTML = '🎾';
+            header.classList.remove('expanded');
         }
     }
 
@@ -149,32 +446,25 @@
         if (!button) return;
 
         isHighlighted = !isHighlighted;
-
         slotsToHighlight.forEach(slotElement => {
             slotElement.classList.toggle(HIGHLIGHT_CLASS, isHighlighted);
         });
-
         button.textContent = isHighlighted ? '💡 Highlight Slots OFF' : '🎨 Highlight Slots ON';
         button.style.backgroundColor = isHighlighted ? '#ffc107' : '#f0f0f0';
         button.style.color = isHighlighted ? '#333' : '#333';
     }
 
-    /**
-     * Toggles the grey-out and content-hide class on all busy slots. (UPDATED LOGIC)
-     */
     function fadeBusySlots() {
         const busySlots = document.querySelectorAll('td.notallowed');
         const button = document.getElementById('fade-busy-btn');
         if (!button) return;
 
         isFaded = !isFaded;
-
         busySlots.forEach(slotElement => {
             // Apply fade background
             slotElement.classList.toggle(FADE_CLASS, isFaded);
 
             // Hide content if the slot is NOT empty
-            // We check textContent length > 1 to ignore empty slots or those with just spaces/newlines
             if (slotElement.textContent && slotElement.textContent.trim().length > 1) {
                 slotElement.classList.toggle(HIDE_CONTENT_CLASS, isFaded);
             }
@@ -183,7 +473,6 @@
         button.textContent = isFaded ? 'Clear Busy Slots' : '🌫️ Fade Busy Slots';
         button.style.backgroundColor = isFaded ? '#bdbdbd' : '#f0f0f0';
     }
-
 
     function exportToCsv() {
         if (availableSlotsData.length === 0) {
@@ -197,12 +486,10 @@
             `"${slot.courtId}"`,
             `"${slot.time}"`
         ]);
-
         const csvContent = [
             headers.join(','),
             ...csvRows.map(e => e.join(','))
         ].join('\n');
-
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
@@ -217,6 +504,127 @@
     }
 
     /**
+     * Determines the color based on the guest reservation count (Rule 2).
+     */
+    function getGuestResStyle(count) {
+        if (count === 0) return { color: '#dc3545', background: '#f8d7da' }; // Red
+        if (count <= 2) return { color: '#ffc107', background: '#fff3cd' }; // Orange
+        if (count <= 4) return { color: '#28a745', background: '#d4edda' }; // Light Green
+        return { color: '#28a745', background: '#c3e6cb' }; // Green
+    }
+
+    /**
+     * Builds and inserts the table showing reservation limits, including guest credits.
+     */
+    function insertReservationStatsTable(stats) {
+        const statsDiv = document.getElementById('reservation-stats');
+        if (!statsDiv) {
+             return;
+        }
+
+        // Rule 1: Primary reservation colors (Red if used >= authorized, Green otherwise)
+        const isExceeded = (stats.used >= stats.authorized);
+        const primaryColor = isExceeded ? '#dc3545' : '#28a745';
+
+        // Rule 2: Guest reservation color and background
+        const guestStyle = getGuestResStyle(stats.guest_res);
+        let tableHTML = `
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin: 0; table-layout: fixed;">
+                <thead>
+                    <tr style="background-color: #f8f9fa;">
+                        <th style="border: 1px solid #ddd; padding: 6px;">Limit</th>
+                        <th style="border: 1px solid #ddd; padding: 6px;">Used</th>
+                        <th style="border: 1px solid #ddd; padding: 6px;">Remaining</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="border: 1px solid #ddd; padding: 6px; text-align: center; font-weight: bold; color: ${primaryColor};">
+                            <b>${stats.authorized}</b>
+                        </td>
+                        <td style="border: 1px solid #ddd; padding: 6px; text-align: center; font-weight: bold; color: ${primaryColor};">
+                            <b>${stats.used}</b>
+                        </td>
+                        <td style="border: 1px solid #ddd;
+                            padding: 6px; text-align: center; font-weight: bold; color: ${primaryColor};">
+                            <b>${stats.remaining}</b>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td colspan="2" style="border: 1px solid #ddd;
+                            padding: 6px; font-weight: bold; background-color: #f1f1f1;">Guest Credits Remaining</td>
+                        <td style="border: 1px solid #ddd;
+                            padding: 6px; text-align: center; font-weight: bold; color: ${guestStyle.color}; background-color: ${guestStyle.background};">
+                             <b>${stats.guest_res}</b>
+                        </td>
+                    </tr>
+                </tbody>
+           </table>
+        `;
+
+        statsDiv.innerHTML = tableHTML;
+
+        fixContentHeight('res-stats-content');
+    }
+
+    /**
+     * Wraps content in a collapsible container (Header + Content).
+     */
+    function createCollapsibleSection(parentDiv, title, icon, contentHtml, idPrefix, isExpanded = false) {
+        const headerId = `${idPrefix}-header`;
+        const contentId = `${idPrefix}-content`;
+
+        // Create Header
+        const header = document.createElement('div');
+        header.id = headerId;
+        header.className = 'collapsible-header';
+        header.innerHTML = `${icon} ${title} <span class="icon">▶</span>`;
+        header.onclick = () => toggleCollapse(contentId, headerId);
+
+        // Create Content Container
+        const content = document.createElement('div');
+        content.id = contentId;
+        content.className = 'collapsible-content';
+
+        content.innerHTML = contentHtml;
+
+        parentDiv.appendChild(header);
+        parentDiv.appendChild(content);
+
+        // Set default state
+        if (isExpanded) {
+            header.classList.add('expanded');
+            content.classList.add(EXPANDED_CLASS);
+        }
+
+        return { header: header, content: content };
+    }
+
+    /**
+     * Creates a static, non-collapsible section for the main data.
+     */
+    function createStaticSection(parentDiv, title, icon, contentHtml, idPrefix) {
+        // Create Header (Styling mimics collapsible but is static)
+        const header = document.createElement('div');
+        header.className = 'collapsible-header';
+        header.style.cursor = 'default';
+        header.style.backgroundColor = '#e9ecef';
+        header.innerHTML = `${icon} ${title}`;
+
+        // Create Content Container
+        const content = document.createElement('div');
+        content.id = idPrefix; // Use the prefix as the main ID
+        content.className = 'static-content';
+        content.style.padding = '10px';
+        content.innerHTML = contentHtml;
+
+        parentDiv.appendChild(header);
+        parentDiv.appendChild(content);
+
+        return content;
+    }
+
+    /**
      * Creates and inserts the floating sidebar UI container.
      */
     function insertControlPanel() {
@@ -226,60 +634,129 @@
         // --- Sidebar Header (Toggle Icon) ---
         const headerDiv = document.createElement('div');
         headerDiv.id = 'sidebar-header';
-        headerDiv.innerHTML = '🎾'; // Default collapsed icon
+        headerDiv.innerHTML = '🎾';
         headerDiv.onclick = togglePanel;
         sidebarDiv.appendChild(headerDiv);
 
         // --- Sidebar Content ---
         const contentDiv = document.createElement('div');
         contentDiv.id = 'sidebar-content';
+        sidebarDiv.appendChild(contentDiv);
+        document.body.appendChild(sidebarDiv);
 
-        // 1. Controls (Toggle Buttons)
-        const controlsHeader = document.createElement('div');
-        controlsHeader.innerHTML = '<h5 style="margin: 0 0 5px 0; text-align: center; border-bottom: 1px solid #ddd; padding-bottom: 5px;">Toggle Controls</h5>';
-        contentDiv.appendChild(controlsHeader);
+        // 1. User Info
+        let userInfoHtml = '';
+        const userDataElement = document.querySelector('.user-data');
+        if (userDataElement && !userDataElement.textContent.trim().includes('Login')) {
+            isLoggedIn = true;
+            const nameText = userDataElement.textContent.trim();
+            const userNameMatch = nameText.match(/Logged in as: (.*)/);
+            const formattedName = userNameMatch ? userNameMatch[1] : nameText;
+            const profileLink = `<a href="https://cs-maisonnex.ch/profile" class="profile-link">(Profile 🔗)</a>`;
+            userInfoHtml = `
+                <span style="text-align: center; display: block;">
+                    👋 Logged in as: <b>${formattedName}</b>${profileLink}
+                </span></br>
+            `;
+        } else {
+            isLoggedIn = false;
+        }
 
+        const userInfo = createCollapsibleSection(contentDiv, 'User Info', '👤', userInfoHtml, 'user-info', false);
+        if (!isLoggedIn) userInfo.header.style.display = 'none';
+
+        // 2. Current Reservations Table
+        let tableHtml = '<div id="current-reservations-wrapper">';
+        if (isLoggedIn) {
+            const currentResWrapper = document.getElementById('currnt_resrvtn_table_wrapper');
+            if (currentResWrapper) {
+                const currentTable = currentResWrapper.querySelector('#currnt_resrvtn_table');
+                if (currentTable && currentTable.tBodies.length > 0 && currentTable.tBodies[0].rows.length > 0) {
+                    const tempResDiv = currentResWrapper.cloneNode(true);
+                    const tableInfo = tempResDiv.querySelector('#currnt_resrvtn_table_info');
+                    if (tableInfo) tableInfo.remove();
+                    tempResDiv.querySelector('#currnt_resrvtn_table').style.width = '100%';
+                    tableHtml += tempResDiv.innerHTML;
+                } else {
+                    tableHtml += '<p id="current-reservations-empty-message">No current reservations</p>';
+                }
+            } else {
+                 tableHtml += '<p id="current-reservations-empty-message">No current reservations</p>';
+            }
+        }
+        tableHtml += '</div>';
+        const currentRes = createCollapsibleSection(contentDiv, 'Current Reservations', '📅', tableHtml, 'current-res', false);
+        if (!isLoggedIn) currentRes.header.style.display = 'none';
+
+        // 3. Reservation Limits
+        const reservationContentHtml = '<div id="reservation-stats"></div>';
+        const statsSection = createCollapsibleSection(contentDiv, 'Reservation Limits', '🛑', reservationContentHtml, 'res-stats', false);
+        if (isLoggedIn) {
+            const stats = extractReservationStats();
+            const reservationStatsDiv = document.getElementById('reservation-stats');
+            if (reservationStatsDiv) {
+                insertReservationStatsTable(stats);
+            }
+        } else {
+            statsSection.header.style.display = 'none';
+            statsSection.content.style.maxHeight = '0px';
+            statsSection.content.style.marginBottom = '0px';
+
+            const loginMessage = document.createElement('p');
+            loginMessage.style.cssText = 'text-align: center; color: #888; font-style: italic; padding: 5px 0 10px 0; margin-top: 5px;';
+            loginMessage.textContent = 'Log in to view user info and limits.';
+            contentDiv.appendChild(loginMessage);
+        }
+
+        // 4. Controls & Tools (EXPANDED by default)
+        const controlsSection = createCollapsibleSection(contentDiv, 'Controls and Tools', '🛠️', '', 'controls', true);
         const btnDiv = document.createElement('div');
         btnDiv.id = 'control-buttons';
         btnDiv.style.display = 'flex';
         btnDiv.style.flexWrap = 'wrap';
         btnDiv.style.gap = '8px';
-        btnDiv.style.marginBottom = '10px';
 
-        // Highlight Button
         const highlightBtn = document.createElement('button');
         highlightBtn.id = 'highlight-toggle-btn';
         highlightBtn.textContent = '🎨 Highlight Slots ON';
         highlightBtn.onclick = toggleHighlight;
         highlightBtn.style.flexGrow = '1';
 
-        // Fade Busy Button
         const fadeBtn = document.createElement('button');
         fadeBtn.id = 'fade-busy-btn';
         fadeBtn.textContent = '🌫️ Fade Busy Slots';
         fadeBtn.onclick = fadeBusySlots;
         fadeBtn.style.flexGrow = '1';
 
+        // --- NEW FILTER BUTTON ADDED ---
+        const filterBtn = document.createElement('button');
+        filterBtn.id = 'court-filter-btn';
+        filterBtn.textContent = 'Filter: All Courts 🎾';
+        filterBtn.onclick = toggleCourtFilter;
+        filterBtn.style.flexGrow = '1';
+        // -------------------------------
+
         btnDiv.appendChild(highlightBtn);
-        btnDiv.appendChild(fadeBtn);
-        contentDiv.appendChild(btnDiv);
+        btnDiv.appendChild(filterBtn); // ADDED FILTER BUTTON
 
-        // 2. Summary Table Container
-        const summaryDiv = document.createElement('div');
-        summaryDiv.id = 'availability-summary';
-        contentDiv.appendChild(summaryDiv);
+        if (isLoggedIn) {
+            btnDiv.appendChild(fadeBtn);
+        } else {
+             highlightBtn.style.flexGrow = '0';
+             highlightBtn.style.width = '100%';
+             filterBtn.style.flexGrow = '0';
+             filterBtn.style.width = '100%';
+        }
 
-        // 3. Export Button (Below the table)
+        controlsSection.content.appendChild(btnDiv);
+
+        // 5. Available Timeslots (STATIC SECTION - LAST)
+        const summaryContent = createStaticSection(contentDiv, 'Available Timeslots', '✅', '<div id="availability-summary"></div>', 'static-timeslots-container');
         const exportBtn = document.createElement('button');
         exportBtn.id = 'export-button';
         exportBtn.innerHTML = '⬇️ Export Table to CSV';
-        exportBtn.style.marginTop = '10px';
         exportBtn.onclick = exportToCsv;
-        contentDiv.appendChild(exportBtn);
-
-
-        sidebarDiv.appendChild(contentDiv);
-        document.body.appendChild(sidebarDiv);
+        summaryContent.appendChild(exportBtn);
     }
 
     /**
@@ -291,7 +768,6 @@
 
         for (const slot of sortedSlots) {
             const key = slot.courtId;
-
             if (!groupedSlots.has(key)) {
                 groupedSlots.set(key, {
                     courtId: slot.courtId,
@@ -305,10 +781,10 @@
         }
 
         const courtGroups = Array.from(groupedSlots.values());
-
         courtGroups.sort((a, b) => {
             if (a.priority !== b.priority) return a.priority - b.priority;
-            return a.courtId.localeCompare(b.courtId, undefined, { numeric: true });
+            const courtComparison = a.courtId.localeCompare(b.courtId, undefined, { numeric: true });
+            return courtComparison;
         });
 
         // --- Build HTML Table ---
@@ -316,13 +792,12 @@
         if (!summaryDiv) return;
 
         // Final Header Text
-        let tableHTML = `<h6 style="margin: 5px 0 8px 0; text-align: center; color: #007bff; font-size: 14px; font-weight: bold; border-top: 1px solid #ddd; padding-top: 5px;">Number of Available Time Slots (${totalSlots} Total)</h6>`;
-
+        let tableHTML = `<h6 style="margin: 0 0 8px 0; text-align: center; color: #007bff; font-size: 14px; font-weight: bold;">Available Time Slots (${totalSlots} Total)</h6>`;
         if (totalSlots === 0) {
-             tableHTML += `<p style="text-align: center; color: red; font-size: 14px;">No available slots found.</p>`;
+             tableHTML += `<p style="text-align: center; color: red; font-size: 14px; padding: 10px 0;">🛑 No available timeslots or maximum reservations reached!</p>`;
         } else {
             tableHTML += `
-                <div style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px;">
+                <div style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 10px;">
                 <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
                     <thead style="background-color: #e9ecef; position: sticky; top: 0;">
                         <tr>
@@ -343,32 +818,15 @@
                     <tr style="background-color: ${rowBg};">
                         <td style="border: 1px solid #ddd; padding: 4px; font-weight: bold;">${typeLabel} ${group.courtId}</td>
                         <td style="border: 1px solid #ddd; padding: 4px; text-align: center; color: #28a745;">${group.times.length}</td>
-                        <td style="border: 1px solid #ddd; padding: 4px; word-break: break-word;">${group.times.join(', ')}</td>
+                        <td
+                            style="border: 1px solid #ddd; padding: 4px; word-break: break-word;">${group.times.join(', ')}</td>
                     </tr>
                 `;
             });
-
             tableHTML += `</tbody></table></div>`;
         }
 
         summaryDiv.innerHTML = tableHTML;
-
-        // Only show the alert once on page load
-        if (!isPanelExpanded) {
-            const outputForAlert = createSummaryOutputForAlert(courtGroups, totalSlots);
-            alert(outputForAlert);
-        }
-    }
-
-    function createSummaryOutputForAlert(courtGroups, totalSlots) {
-        let output = `🎾 **Total Available Slots Found: ${totalSlots}**\n`;
-
-        for (const group of courtGroups) {
-            const count = group.times.length;
-            output += `\n**${group.type} Court ${group.courtId}**: ${count} available slot(s)\n`;
-            output += `   ${group.times.join(', ')}\n`;
-        }
-        return output;
     }
 
     // --- Main Control Flow ---
@@ -376,15 +834,38 @@
     function initializeScript() {
         if (!document.body) {
              setTimeout(initializeScript, 500);
-             return;
+            return;
+        }
+
+        // Determine login status
+        const userDataElement = document.querySelector('.user-data');
+        if (userDataElement && !userDataElement.textContent.trim().includes('Login')) {
+            isLoggedIn = true;
+        } else {
+            isLoggedIn = false;
         }
 
         insertHighlightStyles();
         insertControlPanel();
         detectAndSortAvailableSlots();
 
-        // Set initial highlight state
-        isHighlighted = false;
+        // Hide the original info container div
+        const inforContainer = document.querySelector('.infor-container');
+        if (inforContainer) {
+            inforContainer.style.display = 'none';
+        }
+
+        // EXPANSION FIX: Set max-height for the default expanded section (Controls)
+        const controlsHeader = document.getElementById('controls-header');
+        const controlsContent = document.getElementById('controls-content');
+
+        if (controlsContent && controlsHeader && controlsHeader.classList.contains('expanded')) {
+            setTimeout(() => {
+                controlsContent.style.maxHeight = controlsContent.scrollHeight + "px";
+            }, 100);
+        }
+
+        // Set initial highlight state (ON by default)
         toggleHighlight();
     }
 
@@ -412,7 +893,6 @@
                 }
             }
         });
-
         availableSlotsData = detectedSlots;
 
         // Apply the Three-Tier Sort
@@ -422,7 +902,6 @@
             if (courtComparison !== 0) return courtComparison;
             return timeToInt(a.time) - timeToInt(b.time);
         });
-
         insertSummaryTable(availableSlotsData);
     }
 })();
