@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CS Maisonnex - History Stats
 // @namespace    http://tampermonkey.net/
-// @version      3.3
-// @description  Adds play statistics and graphs to the player history page with a clean, collapsible control panel. Key metrics formatting restored. History title bar removed and table hidden by default after generation.
+// @version      4.0
+// @description  Enhanced stats dashboard with year toggle and full responsive design for desktop, tablet, and smartphone. View current year or overall statistics with interactive charts.
 // @author       Phil V
 // @match        https://cs-maisonnex.ch/history
 // @grant        GM_addStyle
@@ -21,23 +21,97 @@
         /* Font Awesome for Icons */
         @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css');
 
+        /* ===== RESPONSIVE BREAKPOINTS ===== */
+        /* Desktop: 1024px+ | Tablet: 768px-1023px | Mobile: <768px */
+
         /* General Container and Dashboard Styles */
         #plugin-ch-stats-container {
             font-family: 'Inter', sans-serif;
-            margin: 20px 0;
+            margin: 20px auto;
             padding: 20px;
             border-radius: 12px;
-            background-color: #f8f8ff; /* Light lavender background */
+            background-color: #f8f8ff;
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
             color: #333;
+            max-width: 100%;
+            box-sizing: border-box;
         }
 
         #plugin-ch-stats-container h2 {
             font-size: 1.8rem;
-            color: #4a5568; /* Darker header color */
+            color: #4a5568;
             border-bottom: 2px solid #e2e8f0;
             padding-bottom: 10px;
             margin-bottom: 20px;
+        }
+
+        /* Year Toggle Controls - Responsive */
+        .year-toggle-container {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e2e8f0;
+            flex-direction: row;
+        }
+
+        .year-toggle-container label {
+            font-weight: 700;
+            font-size: 0.95rem;
+            color: #4a5568;
+            white-space: nowrap;
+        }
+
+        .toggle-button-group {
+            display: flex;
+            gap: 10px;
+            background-color: #e2e8f0;
+            border-radius: 6px;
+            padding: 4px;
+        }
+
+        .toggle-button-group button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background-color: transparent;
+            color: #4a5568;
+            font-size: 0.9rem;
+        }
+
+        .toggle-button-group button.active {
+            background-color: #4c6ef5;
+            color: white;
+            box-shadow: 0 2px 8px rgba(76, 110, 245, 0.3);
+        }
+
+        .year-range-display {
+            font-size: 0.85rem;
+            color: #718096;
+            font-weight: 500;
+            padding: 8px 12px;
+            background-color: #ffffff;
+            border-radius: 4px;
+            border: 1px solid #e0e0e0;
+        }
+
+        /* Tablet adjustments for toggle */
+        @media (max-width: 1023px) {
+            .year-toggle-container {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+
+            .year-range-display {
+                width: 100%;
+                text-align: center;
+            }
         }
 
         /* --- Collapsible Control Panel Styles --- */
@@ -80,6 +154,7 @@
             transform: translateX(100%);
             transition: transform 0.3s ease-out;
             overflow-y: auto;
+            box-sizing: border-box;
         }
 
         #plugin-ch-control-panel-drawer.open {
@@ -133,12 +208,14 @@
             transition: background-color 0.2s, opacity 0.2s;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
             flex-grow: 1;
+            font-size: 0.95rem;
+            box-sizing: border-box;
         }
 
         #btn-show-all {
             background-color: #f59e0b;
             color: white;
-            display: none; /* Hidden by default, only shown if auto-expand fails */
+            display: none;
         }
 
         #btn-run-analytics {
@@ -167,6 +244,13 @@
             box-shadow: none;
         }
 
+        /* Responsive drawer for mobile */
+        @media (max-width: 767px) {
+            #plugin-ch-control-panel-drawer {
+                width: 100%;
+            }
+        }
+
         /* Alert Box Style */
         #plugin-ch-alert {
             position: fixed;
@@ -180,16 +264,28 @@
             opacity: 0;
             transition: opacity 0.5s, transform 0.5s;
             transform: translateX(100%);
+            max-width: 90%;
+            box-sizing: border-box;
         }
+
+        @media (max-width: 767px) {
+            #plugin-ch-alert {
+                right: 10px;
+                left: 10px;
+                max-width: none;
+            }
+        }
+
         .plugin-ch-alert-success { background-color: #2f855a; color: white; }
         .plugin-ch-alert-error { background-color: #ef4444; color: white; }
 
-        /* Summary Card Styles (3 per row) */
+        /* Summary Card Styles - RESPONSIVE */
         .stats-summary {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
             gap: 20px;
             margin-bottom: 30px;
+            width: 100%;
         }
 
         .stat-card {
@@ -198,22 +294,26 @@
             background-color: #ffffff;
             border: 1px solid #e0e0e0;
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+            box-sizing: border-box;
         }
 
         /* Badge Formatting Restoration (Key Numbers) */
         .stat-card-value {
-            font-size: 2.5rem; /* Large and prominent */
-            font-weight: 900; /* Extra bold */
-            color: #4c6ef5; /* Primary color */
+            font-size: 2.5rem;
+            font-weight: 900;
+            color: #4c6ef5;
             margin-top: 5px;
             line-height: 1.1;
+            word-break: break-word;
         }
+
         .stat-card-title {
             font-size: 0.9rem;
             color: #718096;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
+
         .stat-highlight {
              font-size: 0.85rem;
              color: #2f855a;
@@ -221,13 +321,57 @@
              font-weight: 600;
         }
 
+        /* Tablet: 2 columns */
+        @media (max-width: 1023px) {
+            .stats-summary {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 15px;
+            }
 
-        /* Chart Styles (2 per row on desktop) */
+            .stat-card {
+                padding: 12px;
+            }
+
+            .stat-card-value {
+                font-size: 2rem;
+            }
+
+            .stat-card-title {
+                font-size: 0.8rem;
+            }
+        }
+
+        /* Mobile: 1 column */
+        @media (max-width: 767px) {
+            .stats-summary {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+
+            .stat-card {
+                padding: 10px;
+            }
+
+            .stat-card-value {
+                font-size: 1.8rem;
+            }
+
+            .stat-card-title {
+                font-size: 0.75rem;
+            }
+
+            .stat-highlight {
+                font-size: 0.75rem;
+            }
+        }
+
+        /* Chart Styles - RESPONSIVE */
         .charts-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
             gap: 30px;
             margin-bottom: 30px;
+            width: 100%;
         }
 
         .chart-box {
@@ -236,20 +380,57 @@
             border-radius: 8px;
             box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
             min-height: 300px;
+            box-sizing: border-box;
         }
 
-        /* Top Players List Style Enhancements (Restoration) */
+        /* Tablet: 1 column for charts */
+        @media (max-width: 1023px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+
+            .chart-box {
+                min-height: 250px;
+                padding: 15px;
+            }
+        }
+
+        /* Mobile: Full width, reduced padding */
+        @media (max-width: 767px) {
+            .charts-grid {
+                gap: 15px;
+                margin-bottom: 20px;
+            }
+
+            .chart-box {
+                min-height: 200px;
+                padding: 10px;
+            }
+        }
+
+        /* Top Players List Style Enhancements - RESPONSIVE */
         #top-players-container {
             background-color: #ffffff;
             padding: 25px;
             border-radius: 10px;
             box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            box-sizing: border-box;
         }
+
+        #top-players-container h2 {
+            font-size: 1.5rem;
+            color: #4a5568;
+            margin-bottom: 20px;
+        }
+
         #top-players-list {
             list-style: none;
             padding: 0;
-            margin: 15px 0 0 0;
+            margin: 0;
         }
+
         #top-players-list li {
             display: flex;
             justify-content: space-between;
@@ -257,10 +438,14 @@
             border-bottom: 1px solid #edf2f7;
             font-size: 1.1rem;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
         }
+
         #top-players-list li:last-child {
             border-bottom: none;
         }
+
         .rank {
             font-weight: 700;
             color: #4a5568;
@@ -268,10 +453,13 @@
             text-align: right;
             margin-right: 10px;
         }
+
         .player-name {
             flex-grow: 1;
             font-weight: 500;
+            min-width: 150px;
         }
+
         .reservation-count {
             font-weight: 700;
             color: #2f855a;
@@ -279,9 +467,58 @@
             padding: 4px 10px;
             border-radius: 4px;
             font-size: 0.95rem;
+            white-space: nowrap;
         }
 
-        /* New Table Toggle Button Style */
+        /* Tablet adjustments */
+        @media (max-width: 1023px) {
+            #top-players-container {
+                padding: 20px;
+            }
+
+            #top-players-container h2 {
+                font-size: 1.3rem;
+            }
+
+            #top-players-list li {
+                font-size: 1rem;
+            }
+        }
+
+        /* Mobile adjustments */
+        @media (max-width: 767px) {
+            #top-players-container {
+                padding: 15px;
+            }
+
+            #top-players-container h2 {
+                font-size: 1.1rem;
+                margin-bottom: 15px;
+            }
+
+            #top-players-list li {
+                font-size: 0.9rem;
+                padding: 8px 0;
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .rank {
+                width: auto;
+                margin-right: 5px;
+            }
+
+            .player-name {
+                min-width: auto;
+            }
+
+            .reservation-count {
+                width: 100%;
+                text-align: center;
+            }
+        }
+
+        /* New Table Toggle Button Style - Responsive */
         #btn-toggle-table {
             margin-bottom: 15px;
             margin-top: 15px;
@@ -289,6 +526,15 @@
             font-size: 1rem;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
             transition: background-color 0.2s;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        @media (max-width: 767px) {
+            #btn-toggle-table {
+                font-size: 0.9rem;
+                padding: 8px 15px;
+            }
         }
     `);
 
@@ -342,7 +588,7 @@
     }
 
     // --- Core Data Processing ---
-    function processHistoryTable(normalizedSelfName) {
+    function processHistoryTable(normalizedSelfName, filterYear = null) {
         const historyTable = document.getElementById('history');
         if (!historyTable) return { totalReservations: 0 };
 
@@ -355,7 +601,11 @@
 
         const tableRows = tbody.getElementsByTagName('tr');
 
-        console.log(`Plugin.ch History Stats: Processing ${tableRows.length} records.`);
+        console.log(`Plugin.ch History Stats: Processing ${tableRows.length} records. Filter year: ${filterYear || 'Overall'}`);
+
+        const currentYear = new Date().getFullYear();
+        let minDate = null;
+        let maxDate = null;
 
         for (let i = 0; i < tableRows.length; i++) {
             const row = tableRows[i];
@@ -367,25 +617,34 @@
                 const courtName = cells[3].textContent.trim() || 'Unknown Court';
                 const playerNamesCell = cells[4];
 
-                const individualNamesRaw = playerNamesCell.innerHTML.split(/<br\s*\/?>/i);
-
-                individualNamesRaw.forEach(rawName => {
-                    const cleanedName = rawName.replace(/\s+/g, ' ').trim();
-
-                    if (cleanedName && cleanedName !== 'Unknown Player') {
-                        const normalizedEntryName = normalizeForComparison(cleanedName);
-
-                        if (!normalizedSelfName || normalizedEntryName !== normalizedSelfName) {
-                            reservationsPerPlayer1.set(cleanedName, (reservationsPerPlayer1.get(cleanedName) || 0) + 1);
-                        }
-                    }
-                });
-
                 const dateTimeString = `${dateString.replace(/-/g, '/')} ${timeString}`;
                 const date = new Date(dateTimeString);
 
+                // Apply year filter if specified
+                if (filterYear && date.getFullYear() !== filterYear) {
+                    continue;
+                }
+
                 if (!isNaN(date.getTime())) {
                     playDates.push(date);
+                    
+                    // Track date range for display
+                    if (!minDate || date < minDate) minDate = date;
+                    if (!maxDate || date > maxDate) maxDate = date;
+
+                    const individualNamesRaw = playerNamesCell.innerHTML.split(/<br\s*\/?>/i);
+                    individualNamesRaw.forEach(rawName => {
+                        const cleanedName = rawName.replace(/\s+/g, ' ').trim();
+
+                        if (cleanedName && cleanedName !== 'Unknown Player') {
+                            const normalizedEntryName = normalizeForComparison(cleanedName);
+
+                            if (!normalizedSelfName || normalizedEntryName !== normalizedSelfName) {
+                                reservationsPerPlayer1.set(cleanedName, (reservationsPerPlayer1.get(cleanedName) || 0) + 1);
+                            }
+                        }
+                    });
+
                     reservationsPerCourt.set(courtName, (reservationsPerCourt.get(courtName) || 0) + 1);
                 }
             }
@@ -393,8 +652,8 @@
 
         const totalReservations = playDates.length;
         if (totalReservations === 0) {
-            console.warn('Plugin.ch History Stats: Zero valid dates were extracted.');
-            return { totalReservations: 0 };
+            console.warn('Plugin.ch History Stats: Zero valid dates were extracted for the selected period.');
+            return { totalReservations: 0, dateRange: { min: null, max: null } };
         }
 
         const stats = {
@@ -404,8 +663,9 @@
             reservationsPerWeek: new Map(),
             reservationsPerDay: new Map(),
             reservationsPerHour: new Array(24).fill(0),
-            currentYearHour: new Array(24).fill(0),
             reservationsPerPlayerCurrentYear: new Map(),
+            dateRange: { min: minDate, max: maxDate },
+            isCurrentYearFilter: filterYear === currentYear,
         };
 
         let maxYear = { count: 0, key: '' };
@@ -413,10 +673,6 @@
         let maxWeek = { count: 0, key: '' };
         let maxDay = { count: 0, key: '' };
         let maxHour = { count: 0, hour: -1 };
-        
-        const currentYear = new Date().getFullYear();
-        let currentYearCount = 0;
-        let maxCurrentYearHour = { count: 0, hour: -1 };
 
         playDates.forEach(date => {
             const year = date.getFullYear().toString();
@@ -448,62 +704,23 @@
             if (stats.reservationsPerHour[hour] > maxHour.count) {
                 maxHour = { count: stats.reservationsPerHour[hour], hour: hour };
             }
-            
-            // Track current year statistics
-            if (date.getFullYear() === currentYear) {
-                currentYearCount++;
-                stats.currentYearHour[hour]++;
-                if (stats.currentYearHour[hour] > maxCurrentYearHour.count) {
-                    maxCurrentYearHour = { count: stats.currentYearHour[hour], hour: hour };
-                }
-            }
         });
         
-        // Calculate most played player for current year
-        reservationsPerPlayer1.forEach((count, playerName) => {
-            // Recalculate count for current year only by re-processing
-            let currentYearPlayerCount = 0;
-            for (let i = 0; i < playDates.length; i++) {
-                if (playDates[i].getFullYear() === currentYear) {
-                    const row = tbody.getElementsByTagName('tr')[i];
-                    if (row) {
-                        const cells = row.getElementsByTagName('td');
-                        if (cells.length >= 5) {
-                            const playerNamesCell = cells[4];
-                            const individualNamesRaw = playerNamesCell.innerHTML.split(/<br\s*\/?>/i);
-                            individualNamesRaw.forEach(rawName => {
-                                const cleanedName = rawName.replace(/\s+/g, ' ').trim();
-                                if (cleanedName === playerName) {
-                                    currentYearPlayerCount++;
-                                }
-                            });
-                        }
-                    }
-                }
-            }
-            if (currentYearPlayerCount > 0) {
-                stats.reservationsPerPlayerCurrentYear.set(playerName, currentYearPlayerCount);
-            }
-        });
-
-        stats.chartDataYear = Array.from(stats.reservationsPerYear).sort(([a], [b]) => a.localeCompare(b));
-        stats.chartDataMonth = Array.from(stats.reservationsPerMonth).sort(([a], [b]) => a.localeCompare(b));
-        stats.chartDataCourt = Array.from(reservationsPerCourt).sort(([, countA], [, countB]) => countB - countA);
-
         stats.topPlayers1 = Array.from(reservationsPerPlayer1)
             .sort(([, countA], [, countB]) => countB - countA);
+
+        // Get most played partner for current year context
+        stats.mostPlayedPartner = stats.topPlayers1.length > 0 ? stats.topPlayers1[0] : ['N/A', 0];
 
         stats.maxYear = maxYear;
         stats.maxMonth = maxMonth;
         stats.maxWeek = maxWeek;
         stats.maxDay = maxDay;
         stats.maxHour = maxHour;
-        
-        // Current year statistics
-        stats.currentYearCount = currentYearCount;
-        stats.maxCurrentYearHour = maxCurrentYearHour;
-        stats.maxCurrentYearPlayer = Array.from(stats.reservationsPerPlayerCurrentYear)
-            .sort(([, countA], [, countB]) => countB - countA)[0] || ['N/A', 0];
+
+        stats.chartDataYear = Array.from(stats.reservationsPerYear).sort(([a], [b]) => a.localeCompare(b));
+        stats.chartDataMonth = Array.from(stats.reservationsPerMonth).sort(([a], [b]) => a.localeCompare(b));
+        stats.chartDataCourt = Array.from(reservationsPerCourt).sort(([, countA], [, countB]) => countB - countA);
 
         return stats;
     }
@@ -564,173 +781,278 @@
         statsContainer.id = 'plugin-ch-stats-container';
         statsContainer.innerHTML = '<h2>Player History Dashboard</h2>';
 
-        // 2. Create Summary Cards
-        const summaryHtml = `
-            <div class="stats-summary">
-                ${createStatCard('Total Reservations Recorded', stats.totalReservations, 'Data from table below')}
-                ${createStatCard('Busiest Year', stats.maxYear.count, `Year: ${stats.maxYear.key}`)}
-                ${createStatCard('Busiest Month', stats.maxMonth.count, `Month: ${stats.maxMonth.key}`)}
-                ${createStatCard('Busiest Week', stats.maxWeek.count, `Week: ${stats.maxWeek.key}`)}
-                ${createStatCard('Busiest Day', stats.maxDay.count, `Date: ${stats.maxDay.key}`)}
-                ${createStatCard('Most Active Hour', stats.maxHour.count, `Time: ${String(stats.maxHour.hour).padStart(2, '0')}:00 - ${String(stats.maxHour.hour + 1).padStart(2, '0')}:00`)}
-                ${createStatCard('Times Played This Year', stats.currentYearCount, `Year: ${new Date().getFullYear()}`)}
-                ${createStatCard('Most Played Time Window', stats.maxCurrentYearHour.count, `Time: ${String(stats.maxCurrentYearHour.hour).padStart(2, '0')}:00 - ${String(stats.maxCurrentYearHour.hour + 1).padStart(2, '0')}:00`)}
-                ${createStatCard('Most Played Partner', stats.maxCurrentYearPlayer[1], `Player: ${stats.maxCurrentYearPlayer[0]}`)}
+        // 2. Create Year Toggle Controls
+        const toggleContainer = document.createElement('div');
+        toggleContainer.className = 'year-toggle-container';
+        
+        const currentYear = new Date().getFullYear();
+        const dateRangeText = stats.dateRange && stats.dateRange.min && stats.dateRange.max
+            ? `${stats.dateRange.min.toLocaleDateString()} to ${stats.dateRange.max.toLocaleDateString()}`
+            : 'No data available';
+
+        toggleContainer.innerHTML = `
+            <label>View Statistics:</label>
+            <div class="toggle-button-group">
+                <button class="year-toggle-btn active" data-filter="overall">Overall</button>
+                <button class="year-toggle-btn" data-filter="current-year">Current Year (${currentYear})</button>
             </div>
+            <div class="year-range-display" id="date-range-display">${dateRangeText}</div>
         `;
+        statsContainer.appendChild(toggleContainer);
+
+        // 3. Create Summary Cards
+        let summaryHtml = `<div class="stats-summary">`;
+        
+        // Always show Total Reservations
+        summaryHtml += createStatCard('Total Reservations', stats.totalReservations, (stats.maxYear && stats.maxYear.count) ? `Peak: ${stats.maxYear.count} in ${stats.maxYear.key}` : 'Data processing');
+        
+        // Show Busiest Year only in Overall view
+        if (!stats.isCurrentYearFilter) {
+            summaryHtml += createStatCard('Busiest Year', (stats.maxYear && stats.maxYear.count) ? stats.maxYear.count : 0, (stats.maxYear && stats.maxYear.key) ? `Year: ${stats.maxYear.key}` : 'N/A');
+        }
+        
+        // Always show other metrics
+        summaryHtml += createStatCard('Busiest Month', (stats.maxMonth && stats.maxMonth.count) ? stats.maxMonth.count : 0, (stats.maxMonth && stats.maxMonth.key) ? `Month: ${stats.maxMonth.key}` : 'N/A');
+        summaryHtml += createStatCard('Busiest Week', (stats.maxWeek && stats.maxWeek.count) ? stats.maxWeek.count : 0, (stats.maxWeek && stats.maxWeek.key) ? `Week: ${stats.maxWeek.key}` : 'N/A');
+        summaryHtml += createStatCard('Busiest Day', (stats.maxDay && stats.maxDay.count) ? stats.maxDay.count : 0, (stats.maxDay && stats.maxDay.key) ? `Date: ${stats.maxDay.key}` : 'N/A');
+        summaryHtml += createStatCard('Most Active Hour', (stats.maxHour && stats.maxHour.count) ? stats.maxHour.count : 0, (stats.maxHour && stats.maxHour.hour >= 0) ? `Time: ${String(stats.maxHour.hour).padStart(2, '0')}:00 - ${String(stats.maxHour.hour + 1).padStart(2, '0')}:00` : 'N/A');
+        
+        // Show Most Played Partner in Current Year view
+        if (stats.isCurrentYearFilter && stats.mostPlayedPartner && stats.mostPlayedPartner[0] !== 'N/A') {
+            summaryHtml += createStatCard('Most Played Partner', stats.mostPlayedPartner[1], `Player: ${stats.mostPlayedPartner[0]}`);
+        }
+        
+        summaryHtml += `</div>`;
         statsContainer.innerHTML += summaryHtml;
 
-        // 3. Create Chart Grid
+        // 4. Create Chart Grid
         const chartsGrid = document.createElement('div');
         chartsGrid.className = 'charts-grid';
         chartsGrid.innerHTML = `
-            <div class="chart-box"><canvas id="chartYear"></canvas></div>
             <div class="chart-box"><canvas id="chartMonth"></canvas></div>
             <div class="chart-box"><canvas id="chartHour"></canvas></div>
             <div class="chart-box"><canvas id="chartCourt"></canvas></div>
+            <div class="chart-box"><canvas id="chartYear"></canvas></div>
         `;
         statsContainer.appendChild(chartsGrid);
 
-        // 4. Create Top Players List
+        // 5. Create Top Players List
         statsContainer.innerHTML += createTopPlayersList(stats.topPlayers1);
 
-        // 5. Insert the dashboard
+        // 6. Insert the dashboard
         historyTable.parentNode.insertBefore(statsContainer, historyTable);
 
-
-        // 6. Add Table Toggle Button
+        // 7. Add Table Toggle Button
         const btnToggleTable = document.createElement('button');
         btnToggleTable.id = 'btn-toggle-table';
         btnToggleTable.className = 'plugin-ch-button';
 
-        // Initial state: table is now hidden by default in handleRunAnalytics
         btnToggleTable.innerHTML = '<i class="fa-solid fa-eye"></i> Show Raw History Table';
-        btnToggleTable.style.backgroundColor = '#2f855a'; // Green for Show
+        btnToggleTable.style.backgroundColor = '#2f855a';
 
         btnToggleTable.addEventListener('click', () => {
             if (historyTable.style.display === 'none') {
-                // Show the table
                 historyTable.style.display = '';
                 btnToggleTable.innerHTML = '<i class="fa-solid fa-eye-slash"></i> Hide Raw History Table';
-                btnToggleTable.style.backgroundColor = '#ef4444'; // Red for Hide
+                btnToggleTable.style.backgroundColor = '#ef4444';
             } else {
-                // Hide the table
                 historyTable.style.display = 'none';
                 btnToggleTable.innerHTML = '<i class="fa-solid fa-eye"></i> Show Raw History Table';
-                btnToggleTable.style.backgroundColor = '#2f855a'; // Green for Show
+                btnToggleTable.style.backgroundColor = '#2f855a';
             }
         });
 
-        // Insert the toggle button right before the history table
         historyTable.parentNode.insertBefore(btnToggleTable, historyTable);
 
+        // 8. Attach year toggle listeners
+        const yearToggleBtns = statsContainer.querySelectorAll('.year-toggle-btn');
+        yearToggleBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const filterType = e.target.getAttribute('data-filter');
+                handleYearToggle(filterType);
+            });
+        });
 
         // --- Chart Rendering Logic ---
+        renderCharts(stats);
+    }
+
+    function renderCharts(stats) {
         const primaryColor = 'rgba(74, 131, 237, 1)';
         const secondaryColor = 'rgba(237, 74, 74, 1)';
         const courtColors = ['#4c6ef5', '#2f855a', '#f59e0b', '#ef4444', '#10b981', '#3b82f6', '#f97316', '#a855f7', '#ec4899', '#f87171'];
 
-
-        new Chart(document.getElementById('chartYear'), {
-            type: 'bar',
-            data: {
-                labels: stats.chartDataYear.map(d => d[0]),
-                datasets: [{
-                    label: 'Reservations Made',
-                    data: stats.chartDataYear.map(d => d[1]),
-                    backgroundColor: stats.chartDataYear.map(d => d[0] === stats.maxYear.key ? secondaryColor : primaryColor),
-                    borderRadius: 6,
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: {
-                    title: { display: true, text: 'Reservations Per Year' },
-                    legend: { display: false }
-                }
+        // Destroy existing charts if they exist
+        const chartCanvases = ['chartMonth', 'chartHour', 'chartCourt', 'chartYear'];
+        chartCanvases.forEach(canvasId => {
+            const canvas = document.getElementById(canvasId);
+            if (canvas && canvas.chart) {
+                canvas.chart.destroy();
             }
         });
 
-        new Chart(document.getElementById('chartMonth'), {
-            type: 'line',
-            data: {
-                labels: stats.chartDataMonth.map(d => d[0]),
-                datasets: [{
-                    label: 'Reservations Made',
-                    data: stats.chartDataMonth.map(d => d[1]),
-                    borderColor: primaryColor,
-                    backgroundColor: 'rgba(74, 131, 237, 0.2)',
-                    fill: true,
-                    tension: 0.2
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: {
-                    title: { display: true, text: 'Reservations Per Month (YYYY-MM)' },
-                    legend: { display: false }
+        if (document.getElementById('chartMonth')) {
+            new Chart(document.getElementById('chartMonth'), {
+                type: 'line',
+                data: {
+                    labels: stats.chartDataMonth.map(d => d[0]),
+                    datasets: [{
+                        label: 'Reservations Made',
+                        data: stats.chartDataMonth.map(d => d[1]),
+                        borderColor: primaryColor,
+                        backgroundColor: 'rgba(74, 131, 237, 0.2)',
+                        fill: true,
+                        tension: 0.3,
+                        borderWidth: 2,
+                    }]
                 },
-                scales: {
-                    x: { ticks: { maxRotation: 45, minRotation: 45 } }
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        title: { display: true, text: 'Reservations Per Month' },
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { 
+                            ticks: { maxRotation: 45, minRotation: 0 },
+                            grid: { display: true }
+                        },
+                        y: { beginAtZero: true }
+                    }
                 }
-            }
-        });
+            });
+        }
 
         const filteredHoursData = stats.reservationsPerHour.slice(6, 23);
         const filteredHoursLabels = filteredHoursData.map((_, index) => `${String(index + 6).padStart(2, '0')}:00`);
 
-        new Chart(document.getElementById('chartHour'), {
-            type: 'bar',
-            data: {
-                labels: filteredHoursLabels,
-                datasets: [{
-                    label: 'Reservations Made',
-                    data: filteredHoursData,
-                    backgroundColor: filteredHoursData.map((_, index) => (index + 6) === stats.maxHour.hour ? secondaryColor : primaryColor),
-                    borderColor: '#ffffff',
-                    borderWidth: 2,
-                    barPercentage: 1.0,
-                    categoryPercentage: 1.0
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: {
-                    title: { display: true, text: 'Reservations by Time of Day (06:00 - 22:59)' },
-                    legend: { display: false }
+        if (document.getElementById('chartHour')) {
+            new Chart(document.getElementById('chartHour'), {
+                type: 'bar',
+                data: {
+                    labels: filteredHoursLabels,
+                    datasets: [{
+                        label: 'Reservations Made',
+                        data: filteredHoursData,
+                        backgroundColor: filteredHoursData.map((_, index) => (index + 6) === stats.maxHour.hour ? secondaryColor : primaryColor),
+                        borderColor: '#ffffff',
+                        borderWidth: 2,
+                        barPercentage: 0.9,
+                        categoryPercentage: 0.9
+                    }]
                 },
-                scales: {
-                    x: { grid: { display: false }, title: { display: true, text: 'Hour of Day' } },
-                    y: { beginAtZero: true }
-                }
-            }
-        });
-
-        new Chart(document.getElementById('chartCourt'), {
-            type: 'doughnut',
-            data: {
-                labels: stats.chartDataCourt.map(d => d[0]),
-                datasets: [{
-                    label: 'Reservations Made',
-                    data: stats.chartDataCourt.map(d => d[1]),
-                    backgroundColor: stats.chartDataCourt.map((_, i) => courtColors[i % courtColors.length]),
-                    hoverOffset: 4
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: {
-                    title: { display: true, text: 'Distribution of Reservations by Court' },
-                    legend: {
-                        position: 'right',
-                        align: 'start',
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        title: { display: true, text: 'Reservations by Time of Day (06:00 - 22:59)' },
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: { beginAtZero: true }
                     }
                 }
-            }
-        });
+            });
+        }
+
+        if (document.getElementById('chartCourt')) {
+            new Chart(document.getElementById('chartCourt'), {
+                type: 'doughnut',
+                data: {
+                    labels: stats.chartDataCourt.map(d => d[0]),
+                    datasets: [{
+                        label: 'Reservations Made',
+                        data: stats.chartDataCourt.map(d => d[1]),
+                        backgroundColor: stats.chartDataCourt.map((_, i) => courtColors[i % courtColors.length]),
+                        hoverOffset: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        title: { display: true, text: 'Distribution by Court' },
+                        legend: {
+                            position: 'bottom',
+                            labels: { padding: 15, font: { size: 11 } }
+                        }
+                    }
+                }
+            });
+        }
+
+        if (document.getElementById('chartYear') && stats.chartDataYear && stats.chartDataYear.length > 0) {
+            const chartYear = new Chart(document.getElementById('chartYear'), {
+                type: 'bar',
+                data: {
+                    labels: stats.chartDataYear.map(d => d[0]),
+                    datasets: [{
+                        label: 'Reservations Made',
+                        data: stats.chartDataYear.map(d => d[1]),
+                        backgroundColor: stats.chartDataYear.map(d => d[0] === stats.maxYear.key ? secondaryColor : primaryColor),
+                        borderRadius: 6,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        title: { display: true, text: 'Reservations Per Year' },
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+            document.getElementById('chartYear').chart = chartYear;
+        }
     }
 
     // --- Button/Panel Handlers ---
+
+    function handleYearToggle(filterType) {
+        const lastName = localStorage.getItem('pluginChLastName');
+        const firstName = localStorage.getItem('pluginChFirstName');
+        const selfNameFormatted = formatName(lastName, firstName);
+        const normalizedSelfName = normalizeForComparison(selfNameFormatted);
+
+        let filterYear = null;
+        if (filterType === 'current-year') {
+            filterYear = new Date().getFullYear();
+        }
+
+        const stats = processHistoryTable(normalizedSelfName, filterYear);
+
+        if (stats && stats.totalReservations > 0) {
+            addStatsAndGraphs(stats);
+
+            // Update active button state
+            const toggleContainer = document.querySelector('.year-toggle-container');
+            if (toggleContainer) {
+                const buttons = toggleContainer.querySelectorAll('.year-toggle-btn');
+                buttons.forEach(btn => {
+                    btn.classList.remove('active');
+                    if (filterType === 'overall' && btn.getAttribute('data-filter') === 'overall') {
+                        btn.classList.add('active');
+                    } else if (filterType === 'current-year' && btn.getAttribute('data-filter') === 'current-year') {
+                        btn.classList.add('active');
+                    }
+                });
+            }
+
+            // Hide history table after generation
+            const historyTable = document.getElementById('history');
+            if (historyTable) {
+                historyTable.style.display = 'none';
+            }
+        } else {
+            console.warn('Plugin.ch History Stats: No reservations found for the selected period.');
+            alertMessage('No reservations found for the selected period.', 'error');
+        }
+    }
 
     function toggleControlPanel() {
         const drawer = document.getElementById('plugin-ch-control-panel-drawer');
@@ -766,7 +1088,6 @@
             dt.page.len(-1).draw();
         }
 
-        // Check if the expansion succeeded (length is now -1, meaning "all")
         if (dt.page.len() === -1) {
             btnShowAll.style.display = 'none';
             document.getElementById('btn-run-analytics').disabled = false;
@@ -795,16 +1116,9 @@
         if (stats && stats.totalReservations > 0) {
             addStatsAndGraphs(stats);
 
-            // NEW: Hide the history table by default after generating analytics
             const historyTable = document.getElementById('history');
-            const toggleButton = document.getElementById('btn-toggle-table');
-
             if (historyTable) {
                 historyTable.style.display = 'none';
-            }
-            if (toggleButton) {
-                toggleButton.innerHTML = '<i class="fa-solid fa-eye"></i> Show Raw History Table';
-                toggleButton.style.backgroundColor = '#2f855a'; // Green for Show
             }
 
             btnRunAnalytics.textContent = 'Analytics Generated';
