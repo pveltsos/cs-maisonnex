@@ -720,6 +720,7 @@
 
         stats.chartDataYear = Array.from(stats.reservationsPerYear).sort(([a], [b]) => a.localeCompare(b));
         stats.chartDataMonth = Array.from(stats.reservationsPerMonth).sort(([a], [b]) => a.localeCompare(b));
+        stats.chartDataWeek = Array.from(stats.reservationsPerWeek).sort(([a], [b]) => a.localeCompare(b));
         stats.chartDataCourt = Array.from(reservationsPerCourt).sort(([, countA], [, countB]) => countB - countA);
 
         return stats;
@@ -893,12 +894,12 @@
 
         if (document.getElementById('chartMonth')) {
             new Chart(document.getElementById('chartMonth'), {
-                type: 'line',
+                type: stats.isCurrentYearFilter ? 'line' : 'line',
                 data: {
-                    labels: stats.chartDataMonth.map(d => d[0]),
+                    labels: stats.isCurrentYearFilter ? stats.chartDataWeek.map(d => d[0]) : stats.chartDataMonth.map(d => d[0]),
                     datasets: [{
                         label: 'Reservations Made',
-                        data: stats.chartDataMonth.map(d => d[1]),
+                        data: stats.isCurrentYearFilter ? stats.chartDataWeek.map(d => d[1]) : stats.chartDataMonth.map(d => d[1]),
                         borderColor: primaryColor,
                         backgroundColor: 'rgba(74, 131, 237, 0.2)',
                         fill: true,
@@ -910,7 +911,7 @@
                     responsive: true,
                     maintainAspectRatio: true,
                     plugins: {
-                        title: { display: true, text: 'Reservations Per Month' },
+                        title: { display: true, text: stats.isCurrentYearFilter ? 'Reservations Per Week (ISO)' : 'Reservations Per Month' },
                         legend: { display: false }
                     },
                     scales: {
@@ -984,30 +985,61 @@
         }
 
         if (document.getElementById('chartYear') && stats.chartDataYear && stats.chartDataYear.length > 0) {
-            const chartYear = new Chart(document.getElementById('chartYear'), {
-                type: 'bar',
-                data: {
-                    labels: stats.chartDataYear.map(d => d[0]),
-                    datasets: [{
-                        label: 'Reservations Made',
-                        data: stats.chartDataYear.map(d => d[1]),
-                        backgroundColor: stats.chartDataYear.map(d => d[0] === stats.maxYear.key ? secondaryColor : primaryColor),
-                        borderRadius: 6,
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: true,
-                    plugins: {
-                        title: { display: true, text: 'Reservations Per Year' },
-                        legend: { display: false }
+            if (stats.isCurrentYearFilter) {
+                // Current Year view: Show Top 10 Players
+                const topPlayersData = stats.topPlayers1.slice(0, 10);
+                const chartYear = new Chart(document.getElementById('chartYear'), {
+                    type: 'bar',
+                    data: {
+                        labels: topPlayersData.map(d => d[0]),
+                        datasets: [{
+                            label: 'Reservations',
+                            data: topPlayersData.map(d => d[1]),
+                            backgroundColor: primaryColor,
+                            borderRadius: 6,
+                        }]
                     },
-                    scales: {
-                        y: { beginAtZero: true }
+                    options: {
+                        indexAxis: 'y',
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            title: { display: true, text: 'Top 10 Partners' },
+                            legend: { display: false }
+                        },
+                        scales: {
+                            x: { beginAtZero: true }
+                        }
                     }
-                }
-            });
-            document.getElementById('chartYear').chart = chartYear;
+                });
+                document.getElementById('chartYear').chart = chartYear;
+            } else {
+                // Overall view: Show Year Chart
+                const chartYear = new Chart(document.getElementById('chartYear'), {
+                    type: 'bar',
+                    data: {
+                        labels: stats.chartDataYear.map(d => d[0]),
+                        datasets: [{
+                            label: 'Reservations Made',
+                            data: stats.chartDataYear.map(d => d[1]),
+                            backgroundColor: stats.chartDataYear.map(d => d[0] === stats.maxYear.key ? secondaryColor : primaryColor),
+                            borderRadius: 6,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            title: { display: true, text: 'Reservations Per Year' },
+                            legend: { display: false }
+                        },
+                        scales: {
+                            y: { beginAtZero: true }
+                        }
+                    }
+                });
+                document.getElementById('chartYear').chart = chartYear;
+            }
         }
     }
 
