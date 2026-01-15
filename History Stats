@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CS Maisonnex - History Stats
 // @namespace    http://tampermonkey.net/
-// @version      3.2
+// @version      3.3
 // @description  Adds play statistics and graphs to the player history page with a clean, collapsible control panel. Key metrics formatting restored. History title bar removed and table hidden by default after generation.
 // @author       Phil V
 // @match        https://cs-maisonnex.ch/history
@@ -404,6 +404,8 @@
             reservationsPerWeek: new Map(),
             reservationsPerDay: new Map(),
             reservationsPerHour: new Array(24).fill(0),
+            currentYearHour: new Array(24).fill(0),
+            reservationsPerPlayerCurrentYear: new Map(),
         };
 
         let maxYear = { count: 0, key: '' };
@@ -411,6 +413,10 @@
         let maxWeek = { count: 0, key: '' };
         let maxDay = { count: 0, key: '' };
         let maxHour = { count: 0, hour: -1 };
+        
+        const currentYear = new Date().getFullYear();
+        let currentYearCount = 0;
+        let maxCurrentYearHour = { count: 0, hour: -1 };
 
         playDates.forEach(date => {
             const year = date.getFullYear().toString();
@@ -442,6 +448,42 @@
             if (stats.reservationsPerHour[hour] > maxHour.count) {
                 maxHour = { count: stats.reservationsPerHour[hour], hour: hour };
             }
+            
+            // Track current year statistics
+            if (date.getFullYear() === currentYear) {
+                currentYearCount++;
+                stats.currentYearHour[hour]++;
+                if (stats.currentYearHour[hour] > maxCurrentYearHour.count) {
+                    maxCurrentYearHour = { count: stats.currentYearHour[hour], hour: hour };
+                }
+            }
+        });
+        
+        // Calculate most played player for current year
+        reservationsPerPlayer1.forEach((count, playerName) => {
+            // Recalculate count for current year only by re-processing
+            let currentYearPlayerCount = 0;
+            for (let i = 0; i < playDates.length; i++) {
+                if (playDates[i].getFullYear() === currentYear) {
+                    const row = tbody.getElementsByTagName('tr')[i];
+                    if (row) {
+                        const cells = row.getElementsByTagName('td');
+                        if (cells.length >= 5) {
+                            const playerNamesCell = cells[4];
+                            const individualNamesRaw = playerNamesCell.innerHTML.split(/<br\s*\/?>/i);
+                            individualNamesRaw.forEach(rawName => {
+                                const cleanedName = rawName.replace(/\s+/g, ' ').trim();
+                                if (cleanedName === playerName) {
+                                    currentYearPlayerCount++;
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+            if (currentYearPlayerCount > 0) {
+                stats.reservationsPerPlayerCurrentYear.set(playerName, currentYearPlayerCount);
+            }
         });
 
         stats.chartDataYear = Array.from(stats.reservationsPerYear).sort(([a], [b]) => a.localeCompare(b));
@@ -456,6 +498,12 @@
         stats.maxWeek = maxWeek;
         stats.maxDay = maxDay;
         stats.maxHour = maxHour;
+        
+        // Current year statistics
+        stats.currentYearCount = currentYearCount;
+        stats.maxCurrentYearHour = maxCurrentYearHour;
+        stats.maxCurrentYearPlayer = Array.from(stats.reservationsPerPlayerCurrentYear)
+            .sort(([, countA], [, countB]) => countB - countA)[0] || ['N/A', 0];
 
         return stats;
     }
@@ -525,6 +573,9 @@
                 ${createStatCard('Busiest Week', stats.maxWeek.count, `Week: ${stats.maxWeek.key}`)}
                 ${createStatCard('Busiest Day', stats.maxDay.count, `Date: ${stats.maxDay.key}`)}
                 ${createStatCard('Most Active Hour', stats.maxHour.count, `Time: ${String(stats.maxHour.hour).padStart(2, '0')}:00 - ${String(stats.maxHour.hour + 1).padStart(2, '0')}:00`)}
+                ${createStatCard('Times Played This Year', stats.currentYearCount, `Year: ${new Date().getFullYear()}`)}
+                ${createStatCard('Most Played Time Window', stats.maxCurrentYearHour.count, `Time: ${String(stats.maxCurrentYearHour.hour).padStart(2, '0')}:00 - ${String(stats.maxCurrentYearHour.hour + 1).padStart(2, '0')}:00`)}
+                ${createStatCard('Most Played Partner', stats.maxCurrentYearPlayer[1], `Player: ${stats.maxCurrentYearPlayer[0]}`)}
             </div>
         `;
         statsContainer.innerHTML += summaryHtml;

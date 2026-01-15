@@ -1,0 +1,464 @@
+// ==UserScript==
+// @name         CS-Maisonnex - Enhanced Ranking Table UI for Defi
+// @namespace    http://tampermonkey.net/
+// @version      3.9 
+// @description  Applies visual enhancements to the ranking table: colored ligue labels, highlighted top 20, and premium icons, across all relevant tables.
+// @author       Phil V
+// @icon         http://philippe.veltsos.com/images/favicon.ico
+// @match        https://cs-maisonnex.ch/league*
+// @grant        GM_addStyle
+// @require      https://code.jquery.com/jquery-3.5.1.min.js
+// @require      https://cdn.datatables.net/1.10.22/js/jquery.dataTables.min.js
+// @run-at       document-idle
+// ==/UserScript==
+
+/* global jQuery, $, DataTable */
+
+(function() {
+    'use strict';
+
+    // ----------------------------------------------------
+    // 1. CSS Injection for Styling (Updated)
+    // ----------------------------------------------------
+    GM_addStyle(`
+        /* Filter Container Styles (Retained) */
+        .filter-container {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+        .filter-group {
+            margin-right: 20px;
+            display: inline-block;
+            vertical-align: top;
+        }
+        .filter-group label {
+            font-weight: bold;
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        .league-checkboxes {
+            padding: 5px 0;
+            display: flex;
+            gap: 10px;
+        }
+        .league-checkboxes .filter-label {
+            font-weight: normal;
+            display: inline-flex;
+            align-items: center;
+            cursor: pointer;
+            padding: 0;
+        }
+        .league-checkboxes input[type="checkbox"] {
+            margin-right: 5px;
+            cursor: pointer;
+        }
+        #club-filter {
+            padding: 5px 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 250px;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        /* --- New CSS for Final Tweaks --- */
+        /* Hide the default DataTables search filter for the Classement table */
+        #classement_filter {
+            display: none !important;
+        }
+
+        /* Hide the Winner column (5th column: index 4) in the lastGame table */
+        #lastGame th:nth-child(5), #lastGame td:nth-child(5) {
+            display: none !important;
+        }
+
+        /* Existing Styles (Retained) */
+        .ligue-label {
+            display: inline-block; padding: 4px 8px; border-radius: 14px;
+            font-weight: bold; font-size: 0.8em; color: #ffffff;
+            text-align: center; min-width: 60px; box-shadow: 1px 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        .league-checkboxes .ligue-label {
+            margin-left: 5px;
+            font-size: 0.9em;
+            padding: 3px 7px;
+        }
+        .ligue-1 { background-color: #27ae60; }
+        .ligue-2 { background-color: #f39c12; }
+        .ligue-3 { background-color: #9b59b6; }
+        .ligue-4 { background-color: #c0392b; }
+        .ligue-default { background-color: #95a5a6; }
+
+        #classement td:nth-child(1) { text-align: center !important; }
+
+        .top-20-rank {
+            font-size: 1.3em; font-weight: 900; color: #27ae60 !important;
+            background-color: #ebfcf2; border-left: 5px solid #27ae60;
+            padding-left: 8px !important;
+        }
+
+        .premium-icon {
+            margin-left: 5px; color: gold; font-size: 1.2em;
+            vertical-align: middle; text-shadow: 0 0 5px rgba(255, 215, 0, 0.5);
+        }
+
+        .name-col { font-size: 11pt !important; }
+        .first-name-uppercase { text-transform: uppercase; }
+
+        .name-wrapper {
+            display: inline;
+        }
+
+        .personneClick {
+            display: inline-block;
+        }
+
+        /* Forced Left Alignment */
+        #table_buddies td:nth-child(1), #lastUser td:nth-child(1), #lastGame td:nth-child(1) { text-align: left !important; }
+        #classement td:nth-child(2), #table_buddies td:nth-child(1), #lastUser td:nth-child(1),
+        #lastGame td:nth-child(1), #lastGame td:nth-child(2) { text-align: left !important; }
+
+        /* Score and Winner Icons */
+        .score-played { font-size: 1.1em; font-weight: bold; color: #1f6b3e; }
+        .icon-match-played { color: #27ae60; font-size: 1.2em; margin-right: 5px; vertical-align: middle; }
+        .icon-match-not-played { color: #c0392b; font-size: 1.2em; margin-right: 5px; vertical-align: middle; }
+        .icon-winner { color: #27ae60; font-size: 1.1em; margin-right: 5px; vertical-align: middle; }
+    `);
+
+    // ----------------------------------------------------
+    // 2. Data/Configuration Definitions (Retained)
+    // ----------------------------------------------------
+
+    const TABLE_CONFIGS = [
+        { id: 'classement', rank: 0, club: 2, ligue: 3, nameCols: [1], doRankHighlight: true },
+        { id: 'table_buddies', rank: -1, club: 1, ligue: 2, nameCols: [0], doRankHighlight: false },
+        { id: 'lastGame', rank: -1, club: -1, ligue: -1, nameCols: [0, 1, 4], doRankHighlight: false, special: { played: 2, score: 3, winner: 4 } },
+        { id: 'lastUser', rank: -1, club: 1, ligue: 2, nameCols: [0], doRankHighlight: false },
+    ];
+
+    function formatDate(dateStr) {
+        if (!dateStr) return '';
+        const parts = dateStr.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
+        if (parts) {
+            const day = parts[1].padStart(2, '0');
+            const month = parts[2].padStart(2, '0');
+            const year = parts[3];
+            return `${year}-${month}-${day}`;
+        }
+        return dateStr.trim();
+    }
+
+    // ----------------------------------------------------
+    // 3. Core Enhancement Logic (Retained from v3.8)
+    // ----------------------------------------------------
+
+    /**
+     * Applies styling enhancements to a single table.
+     */
+    function enhanceTable(config) {
+        const { id, rank: rankColIndex, club: clubColIndex, ligue: ligueColIndex, nameCols, doRankHighlight, special } = config;
+        const table = document.getElementById(id);
+
+        if (!table) return;
+
+        const $rows = $(table).find('tbody tr');
+
+        $rows.each(function(rowIndex) {
+            const $row = $(this);
+            const $cells = $row.find('td');
+
+            if ($cells.length === 0) return;
+
+            // --- A. Handle Standard Name/Player/Winner Columns ---
+            nameCols.forEach(colIndex => {
+                const $cell = $cells.eq(colIndex);
+
+                if ($cell.length === 0) return;
+
+                $cell.addClass('name-col');
+
+                let $targetEl;
+                let nameToProcess = '';
+
+                const $personneClick = $cell.find('span.personneClick');
+                const isPlayerColumn = (id === 'lastGame' && (colIndex === 0 || colIndex === 1));
+
+                if (isPlayerColumn) {
+                    // Scenario 1: #lastGame Player columns (P1/P2)
+                    $targetEl = $personneClick;
+                    nameToProcess = $targetEl.text().trim();
+
+                } else if ($personneClick.length > 0 && id !== 'lastGame') {
+                    // Scenario 2: Other tables (#classement, #lastUser, #table_buddies) Name column
+
+                    nameToProcess = $personneClick.text().trim();
+
+                    // 1. Get the original non-personneClick content (Image + raw name text)
+                    const originalContent = $cell.clone().find('.personneClick').remove().end().html().trim();
+
+                    // 2. Remove the original personneClick span from the actual cell
+                    $personneClick.remove();
+
+                    // 3. Clear the cell completely, then re-add the original non-redundant content
+                    $cell.empty().append(originalContent);
+
+                    // 4. Create the new name-wrapper and append it to the cell
+                    const $newWrapper = $('<span>').addClass('name-wrapper');
+
+                    // Copy original attributes from the deleted span to the new wrapper
+                    $.each($personneClick[0].attributes, function() {
+                        if(this.name !== 'style' && this.name !== 'class') {
+                            $newWrapper.attr(this.name, this.value);
+                        }
+                    });
+                    $newWrapper.attr('style', $personneClick.attr('style') || '');
+
+                    $cell.append($newWrapper);
+                    $targetEl = $newWrapper;
+
+                } else if (id === 'lastGame' && colIndex === 4) {
+                    // Scenario 3: Winner column
+                    $targetEl = $cell.find('.name-wrapper');
+                    if ($targetEl.length === 0) {
+                        $cell.contents().wrapAll('<span class="name-wrapper">');
+                        $targetEl = $cell.find('.name-wrapper');
+                    }
+                    nameToProcess = $targetEl.text().trim();
+                } else {
+                    return;
+                }
+
+                if ($targetEl.length === 0 || !nameToProcess) return;
+
+                // CLEANUP:
+                $targetEl.find('.icon-winner').remove();
+                $targetEl.find('span.first-name-uppercase').contents().unwrap();
+                $cell.css('font-weight', '');
+
+                // REAPPLY CAPITALIZATION LOGIC
+                const nameParts = nameToProcess.split(/\s+/);
+
+                if (nameParts.length > 1) {
+                    nameParts[0] = `<span class="first-name-uppercase">${nameParts[0]}</span>`;
+                    const newText = nameParts.join(' ');
+                    $targetEl.html(newText);
+                } else {
+                    $targetEl.text(nameToProcess);
+                }
+            });
+
+            // --- B. Handle League and Club (Premium Icon) Styling (Retained) ---
+            if (ligueColIndex >= 0 && $cells.length > ligueColIndex) {
+                const ligueCell = $cells[ligueColIndex];
+                const ligueText = ligueCell.textContent.trim();
+
+                if (!$(ligueCell).find('.ligue-label').length) {
+                    const ligueClass = ligueText.toLowerCase().replace(/\s/g, '-');
+
+                    if (ligueText.startsWith('Ligue')) {
+                        ligueCell.innerHTML = `<span class="ligue-label ${ligueClass}">${ligueText}</span>`;
+                    } else {
+                        ligueCell.innerHTML = `<span class="ligue-label ligue-default">${ligueText}</span>`;
+                    }
+                }
+            }
+
+            // Club Premium Icon Logic
+            if (clubColIndex >= 0 && $cells.length > clubColIndex) {
+                const clubCell = $cells[clubColIndex];
+                const clubName = clubCell.textContent.trim().toLowerCase();
+
+                if ((clubName.includes('premium') || clubName.includes('(+)')) && !$(clubCell).find('.premium-icon').length) {
+                    clubCell.innerHTML += '<span class="premium-icon" title="Premium Club">⭐️</span>';
+                }
+            }
+
+            // --- C. Apply Rank Highlight (Retained) ---
+            if (doRankHighlight && rankColIndex >= 0 && $cells.length > rankColIndex) {
+                const rankCell = $cells[rankColIndex];
+                const rank = parseInt(rankCell.textContent.trim());
+                if (!isNaN(rank) && rank > 0 && rank <= 20) {
+                    $(rankCell).addClass('top-20-rank');
+                } else {
+                    $(rankCell).removeClass('top-20-rank');
+                }
+            }
+
+            // --- D. Handle Special Columns (For #lastGame) ---
+            if (id === 'lastGame' && special) {
+                const { played: playedCol, score: scoreCol, winner: winnerCol } = special;
+
+                // 1. Format Played Date (Col 2)
+                if ($cells.length > playedCol) {
+                    const playedCell = $cells[playedCol];
+                    playedCell.textContent = formatDate(playedCell.textContent.trim());
+                }
+
+                // 2. Format Score (Col 3) & Check for Play Status
+                let isPlayed = false;
+                if ($cells.length > scoreCol) {
+                    const scoreCell = $cells[scoreCol];
+                    const scoreText = $(scoreCell).text().trim().replace(/🟢|🔴/, '');
+                    isPlayed = scoreText && scoreText !== '-' && scoreText !== '0-0';
+
+                    const iconClass = isPlayed ? 'icon-match-played' : 'icon-match-not-played';
+                    const icon = isPlayed ? '🟢' : '🔴';
+
+                    let content = '';
+                    if (isPlayed) {
+                        content = `<span class="score-played">${scoreText}</span>`;
+                    }
+
+                    scoreCell.innerHTML = `<span class="${iconClass}">${icon}</span> ${content}`;
+                }
+
+                // 3. Apply Trophy Icon to Winner (Working Logic Retained)
+                if (isPlayed && $cells.length > winnerCol) {
+                    const rawWinnerText = $cells.eq(winnerCol).text().trim();
+
+                    const $player1Cell = $cells.eq(0);
+                    const $player2Cell = $cells.eq(1);
+
+                    const player1RawName = $player1Cell.find('.personneClick').text().trim();
+                    const player2RawName = $player2Cell.find('.personneClick').text().trim();
+
+                    const winnerIsPlayer1 = rawWinnerText === player1RawName;
+                    const winnerIsPlayer2 = rawWinnerText === player2RawName;
+
+                    let $winningNameEl = null;
+
+                    if (winnerIsPlayer1) {
+                         $winningNameEl = $cells.eq(0).find('.personneClick');
+                    } else if (winnerIsPlayer2) {
+                         $winningNameEl = $cells.eq(1).find('.personneClick');
+                    }
+
+                    if ($winningNameEl && $winningNameEl.length) {
+                        $winningNameEl.prepend('<span class="icon-winner">🏆</span> ');
+                        $winningNameEl.parent('td').css('font-weight', 'bold');
+                    }
+                }
+            }
+        });
+    }
+
+    // ----------------------------------------------------
+    // 4. Custom Filter Logic (Updated Label)
+    // ----------------------------------------------------
+
+    function addCustomFilters() {
+        const $classementTable = $('#classement');
+        if ($classementTable.length === 0) return;
+
+        let table;
+        try {
+            table = $classementTable.DataTable({
+                searching: true,
+                paging: true,
+                info: true,
+                destroy: true
+            });
+        } catch (e) {
+            console.error("Failed to initialize DataTable on #classement:", e);
+            return;
+        }
+
+        if (!table) return;
+
+        // --- League Data and Style Map ---
+        const leagues = [
+            { value: "Ligue 1", label: "Ligue 1", class: "ligue-1" },
+            { value: "Ligue 2", label: "Ligue 2", class: "ligue-2" },
+            { value: "Ligue 3", label: "Ligue 3", class: "ligue-3" },
+            { value: "Ligue 4", label: "Ligue 4", class: "ligue-4" }
+        ];
+
+        // --- A. Inject Filter HTML (Label Updated) ---
+        if ($('.filter-container').length === 0) {
+            let leagueCheckboxesHtml = leagues.map(league => `
+                <label class="filter-label">
+                    <input type="checkbox" class="league-filter" value="${league.value}" checked>
+                    <span class="ligue-label ${league.class}">${league.label}</span>
+                </label>
+            `).join('');
+
+            const filterHtml = `
+                <div class="filter-container">
+                    <div class="filter-group">
+                        <label>Filter by League:</label>
+                        <div class="league-checkboxes">
+                            ${leagueCheckboxesHtml}
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <label for="club-filter">Filter by Club or Canton:</label>
+                        <input type="text" id="club-filter" placeholder="Start typing club or canton name...">
+                    </div>
+                </div>
+            `;
+            $classementTable.before(filterHtml);
+        }
+
+        // --- B. League Filter (Checkbox) Logic (Retained) ---
+        const leagueColIndex = 3;
+
+        $.fn.dataTable.ext.search = $.fn.dataTable.ext.search.filter(function(fn) {
+            return !fn.name || fn.name !== 'leagueFilter';
+        });
+
+        const leagueFilter = function(settings, data, dataIndex) {
+            if (settings.nTable.id !== 'classement') {
+                return true;
+            }
+            const selectedLeagues = $('.league-filter:checked').map(function() {
+                return this.value;
+            }).get();
+            return selectedLeagues.includes(data[leagueColIndex]);
+        };
+
+        Object.defineProperty(leagueFilter, 'name', { value: 'leagueFilter' });
+        $.fn.dataTable.ext.search.push(leagueFilter);
+
+        $('.league-filter').off('change.leagueFilter').on('change.leagueFilter', function() {
+            table.draw();
+        });
+
+
+        // --- C. Club Filter (Text Input) Logic (Retained) ---
+
+        $('#club-filter').off('keyup.clubFilter').on('keyup.clubFilter', function() {
+            const searchTerm = this.value;
+            const clubColIndex = 2;
+
+            table.column(clubColIndex).search(searchTerm, true, false, true).draw();
+        });
+
+        table.draw();
+
+        console.log("DataTables filters successfully initialized and applied.");
+    }
+
+    // ----------------------------------------------------
+    // 5. Initialization and Event Binding (Retained)
+    // ----------------------------------------------------
+
+    function initializeEnhancements() {
+         TABLE_CONFIGS.forEach(config => {
+            $(`#${config.id}`).on('draw.dt', function() {
+                enhanceTable(config);
+            });
+            enhanceTable(config);
+         });
+
+         addCustomFilters();
+    }
+
+    $(document).ready(function() {
+        // Run after all scripts have likely modified the DOM
+        setTimeout(initializeEnhancements, 1500);
+    });
+
+})();
