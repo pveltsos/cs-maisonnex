@@ -16,7 +16,8 @@ Adds a side panel menu with options to see current reservations, limits and avai
 
 ![Screenshot](assets/05vEsYQFrl.png)
 
-2. History Stats  
+2. History Stats  - Deprecated
+[Note - as of 8 October 2025 - these have been implemented directly in the platform] 
 Adds a side palnel prompting the player to enter their name and generate the statistics for number of times played, by week, by hours, by year as well as a top 10 partners table. 
 
 [Download or view the video](assets/chrome_eejo4gbObP.mp4)
